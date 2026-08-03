@@ -1,0 +1,414 @@
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowLeft,
+  HelpCircle,
+  Store,
+  Pencil,
+  Trash2,
+  Plus,
+  Minus,
+  Circle,
+  CheckCircle2,
+  ShoppingCart,
+  Briefcase,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import AppImage from '@/components/ui/AppImage';
+import OrderReceiptModal, { type PaymentMethod } from './OrderReceiptModal';
+import { placeOrder } from '../services/orderService';
+import type { CartItem, DeliveryAddressInfo, OrderTotals } from '../types';
+
+/** Display USD menu prices as Myanmar Kyat */
+const USD_TO_MMK = 2100;
+
+export function toMMK(usd: number) {
+  return Math.round(usd * USD_TO_MMK);
+}
+
+export function formatMMK(usd: number) {
+  return `MMK ${toMMK(usd).toLocaleString('en-US')}`;
+}
+
+interface CartPanelProps {
+  items: CartItem[];
+  updateQty: (id: string, delta: number) => void;
+  removeItem: (id: string) => void;
+  removePurchasedItems: (ids: string[]) => void;
+  restaurantName?: string;
+  deliveryAddress: DeliveryAddressInfo;
+  onBack?: () => void;
+  onGoDiscover?: () => void;
+}
+
+export default function CartPanel({
+  items,
+  updateQty,
+  removeItem,
+  removePurchasedItems,
+  restaurantName,
+  deliveryAddress,
+  onBack,
+  onGoDiscover,
+}: CartPanelProps) {
+  const [selectedItems, setSelectedItems] = useState<string[]>(() => items.map((i) => i.id));
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [isPlacing, setIsPlacing] = useState(false);
+  const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setSelectedItems((prev) => {
+      const ids = new Set(items.map((i) => i.id));
+      const kept = prev.filter((id) => ids.has(id));
+      const added = items.map((i) => i.id).filter((id) => !prev.includes(id));
+      if (prev.length === 0 && items.length > 0) return items.map((i) => i.id);
+      return [...kept, ...added];
+    });
+  }, [items]);
+
+  const selectedCartItems = useMemo(
+    () => items.filter((i) => selectedItems.includes(i.id)),
+    [items, selectedItems]
+  );
+
+  const groups = useMemo(() => {
+    const map = new Map<string, CartItem[]>();
+    for (const item of items) {
+      const key = item.restaurantName || restaurantName || 'Restaurant';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    return Array.from(map.entries());
+  }, [items, restaurantName]);
+
+  const subtotal = selectedCartItems.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+  const deliveryFee = selectedCartItems.length > 0 ? 1.99 : 0;
+  const platformFee = selectedCartItems.length > 0 ? 0.5 : 0;
+  const tax = (subtotal + deliveryFee + platformFee) * 0.08;
+  const total = subtotal + deliveryFee + platformFee + tax;
+
+  const allSelected = items.length > 0 && selectedItems.length === items.length;
+  const cartCount = items.reduce((s, i) => s + i.quantity, 0);
+
+  const toggleItem = (id: string) => {
+    setSelectedItems((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleShop = (shopItems: CartItem[]) => {
+    const ids = shopItems.map((i) => i.id);
+    const allShopSelected = ids.every((id) => selectedItems.includes(id));
+    if (allShopSelected) {
+      setSelectedItems((prev) => prev.filter((id) => !ids.includes(id)));
+    } else {
+      setSelectedItems((prev) => [...new Set([...prev, ...ids])]);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedItems(allSelected ? [] : items.map((i) => i.id));
+  };
+
+  const handleConfirmOrder = () => {
+    if (selectedItems.length === 0) {
+      toast.error('Select at least one item to checkout');
+      return;
+    }
+    setPaymentMethod('cash');
+    setReceiptOpen(true);
+  };
+
+  const handlePlaceOrder = async (): Promise<string | null> => {
+    if (selectedCartItems.length === 0) return null;
+
+    const totals: OrderTotals = {
+      subtotal,
+      deliveryFee,
+      platformFee,
+      discount: 0,
+      tax,
+      total,
+      promoApplied: false,
+    };
+
+    setIsPlacing(true);
+    try {
+      const result = await placeOrder({
+        items: selectedCartItems.map((i) => ({
+          ...i,
+          note: itemNotes[i.id] || i.note,
+        })),
+        totals,
+        deliveryAddress,
+        paymentMethod,
+        restaurantName:
+          restaurantName || selectedCartItems[0]?.restaurantName,
+      });
+
+      const purchasedIds = selectedCartItems.map((i) => i.id);
+      removePurchasedItems(purchasedIds);
+      setSelectedItems((prev) => prev.filter((id) => !purchasedIds.includes(id)));
+
+      toast.success(`Order ${result.orderNumber} placed successfully`);
+      return result.orderNumber;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to place order');
+      return null;
+    } finally {
+      setIsPlacing(false);
+    }
+  };
+
+  return (
+    <>
+      <aside className="w-full lg:w-[22rem] xl:w-96 bg-[#f5f5f5] lg:bg-card border-t lg:border-t-0 lg:border-l border-border flex flex-col lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] mt-4 lg:mt-0 rounded-xl lg:rounded-none overflow-hidden">
+        {/* Header — matches shopping cart reference */}
+        <div className="flex-shrink-0 bg-white border-b border-border px-3 py-3 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onBack || onGoDiscover}
+            className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted transition-colors"
+            aria-label="Back"
+          >
+            <ArrowLeft className="w-5 h-5 text-foreground" />
+          </button>
+          <h2 className="font-bold text-base text-foreground">စျေးဝယ်ခြင်း</h2>
+          <button
+            type="button"
+            className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground"
+            aria-label="Help"
+            onClick={() => toast.message('Select items, then confirm to get your order slip.')}
+          >
+            <HelpCircle className="w-5 h-5" />
+          </button>
+        </div>
+
+        {items.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white">
+            <ShoppingCart className="w-14 h-14 text-border mb-3" />
+            <p className="font-semibold text-foreground mb-1">Cart is empty</p>
+            <p className="text-sm text-muted-foreground mb-4">
+              Discover မှ အစားအစာ ထည့်ပါ
+            </p>
+            {onGoDiscover && (
+              <button type="button" onClick={onGoDiscover} className="btn-primary px-5 py-2.5">
+                Go to Discover
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="flex-1 overflow-y-auto scrollbar-hide p-3 space-y-3 pb-24">
+              {groups.map(([shopName, shopItems]) => {
+                const shopAllSelected = shopItems.every((i) => selectedItems.includes(i.id));
+                return (
+                  <div
+                    key={shopName}
+                    className="bg-white rounded-xl border border-border overflow-hidden"
+                  >
+                    {/* Shop header */}
+                    <div className="flex items-center gap-2.5 px-3 py-2.5 border-b border-border/70">
+                      <button
+                        type="button"
+                        onClick={() => toggleShop(shopItems)}
+                        aria-pressed={shopAllSelected}
+                      >
+                        {shopAllSelected ? (
+                          <CheckCircle2 className="w-5 h-5 text-customer" />
+                        ) : (
+                          <Circle className="w-5 h-5 text-muted-foreground" />
+                        )}
+                      </button>
+                      <Store className="w-4 h-4 text-customer flex-shrink-0" />
+                      <p className="text-sm font-bold text-foreground truncate flex-1">
+                        {shopName}
+                      </p>
+                    </div>
+
+                    {/* Product cards */}
+                    <div className="divide-y divide-border/60">
+                      {shopItems.map((item) => {
+                        const isSelected = selectedItems.includes(item.id);
+                        return (
+                          <div key={item.id} className="p-3 flex gap-2.5">
+                            <button
+                              type="button"
+                              onClick={() => toggleItem(item.id)}
+                              className="mt-8 flex-shrink-0"
+                              aria-pressed={isSelected}
+                            >
+                              {isSelected ? (
+                                <CheckCircle2 className="w-5 h-5 text-customer" />
+                              ) : (
+                                <Circle className="w-5 h-5 text-muted-foreground" />
+                              )}
+                            </button>
+
+                            <div className="relative w-20 h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0">
+                              {item.image ? (
+                                <AppImage
+                                  src={item.image}
+                                  alt={item.imageAlt || item.name}
+                                  fill
+                                  className="object-cover"
+                                  sizes="80px"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <ShoppingCart className="w-6 h-6 text-border" />
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start gap-2">
+                                <p className="text-sm font-semibold text-foreground leading-snug flex-1 line-clamp-2">
+                                  {item.name}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => removeItem(item.id)}
+                                  className="text-muted-foreground hover:text-danger transition-colors flex-shrink-0"
+                                  aria-label={`Remove ${item.name}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              <span className="inline-block mt-1.5 text-[11px] px-2 py-0.5 rounded-md bg-muted text-muted-foreground">
+                                {item.options || 'Standard'}
+                              </span>
+
+                              <button
+                                type="button"
+                                className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-customer"
+                                onClick={() => {
+                                  const note = window.prompt(
+                                    'မှတ်ချက်ရေးရန် (Leave a note)',
+                                    itemNotes[item.id] || item.note || ''
+                                  );
+                                  if (note !== null) {
+                                    setItemNotes((prev) => ({ ...prev, [item.id]: note }));
+                                  }
+                                }}
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span className="truncate">
+                                  {itemNotes[item.id] || item.note || 'မှတ်ချက်ရေးရန်'}
+                                </span>
+                              </button>
+
+                              <div className="mt-2 flex items-end justify-between gap-2">
+                                <p className="text-sm font-bold text-foreground font-tabular">
+                                  {formatMMK(item.unitPrice * item.quantity)}
+                                </p>
+
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => updateQty(item.id, -1)}
+                                    className="w-7 h-7 rounded-md bg-muted flex items-center justify-center hover:bg-border transition-colors"
+                                  >
+                                    <Minus className="w-3.5 h-3.5 text-foreground" />
+                                  </button>
+                                  <span className="w-6 text-center text-sm font-bold font-tabular">
+                                    {item.quantity}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateQty(item.id, 1)}
+                                    className="w-7 h-7 rounded-md bg-customer flex items-center justify-center hover:opacity-90 transition-opacity"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 text-white" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Sticky bottom bar */}
+            <div className="relative flex-shrink-0">
+              <button
+                type="button"
+                className="absolute -top-12 right-4 w-11 h-11 rounded-full bg-customer text-white shadow-lg flex items-center justify-center hover:opacity-90 z-10"
+                aria-label="Orders"
+                onClick={() => toast.message(`${cartCount} items in cart`)}
+              >
+                <Briefcase className="w-5 h-5" />
+              </button>
+
+              <div className="border-t border-border bg-white px-3 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    className="flex items-center gap-1.5 min-w-0"
+                    aria-pressed={allSelected}
+                  >
+                    {allSelected ? (
+                      <CheckCircle2 className="w-5 h-5 text-customer flex-shrink-0" />
+                    ) : (
+                      <Circle className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                    )}
+                    <span className="text-xs font-semibold text-foreground whitespace-nowrap">
+                      အားလုံးရွေးချယ်ရန်
+                    </span>
+                  </button>
+
+                  <div className="flex-1 min-w-0 text-right px-1">
+                    <p className="text-[10px] text-muted-foreground leading-none mb-0.5">Total</p>
+                    <p className="text-sm font-bold font-tabular text-customer leading-tight truncate">
+                      {formatMMK(total)}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleConfirmOrder}
+                    disabled={selectedItems.length === 0}
+                    className="flex-shrink-0 px-3.5 py-2.5 rounded-lg text-xs font-bold text-white bg-customer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
+                  >
+                    ဈေးနှုန်းတွက်ချက်ခြင်း
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </aside>
+
+      <OrderReceiptModal
+        isOpen={receiptOpen}
+        onClose={() => setReceiptOpen(false)}
+        items={selectedCartItems.map((i) => ({
+          ...i,
+          note: itemNotes[i.id] || i.note,
+        }))}
+        subtotal={subtotal}
+        deliveryFee={deliveryFee}
+        platformFee={platformFee}
+        tax={tax}
+        total={total}
+        deliveryAddress={deliveryAddress}
+        paymentMethod={paymentMethod}
+        onPaymentMethodChange={setPaymentMethod}
+        isPlacing={isPlacing}
+        onConfirmPayment={handlePlaceOrder}
+        restaurantName={
+          restaurantName || selectedCartItems[0]?.restaurantName
+        }
+        formatMoney={formatMMK}
+      />
+    </>
+  );
+}
