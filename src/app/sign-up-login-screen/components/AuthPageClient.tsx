@@ -1,20 +1,39 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   User, Store, Bike, ShieldCheck, Eye, EyeOff,
-  ChevronRight, Copy, Check, Zap, Clock, Star, TrendingUp,
+  ChevronRight, Copy, Check, Circle, Zap, Clock, Star, TrendingUp,
 } from 'lucide-react';
 import AppLogo from '@/components/ui/AppLogo';
+import {
+  getPasswordRequirements,
+  isPasswordValid,
+  PASSWORD_ERROR_MESSAGE,
+} from '@/lib/password';
+import { writeSession, type SessionUser } from '@/lib/session';
 
 type UserRole = 'CUSTOMER' | 'RESTAURANT' | 'RIDER' | 'ADMIN';
 type AuthTab = 'login' | 'signup';
 
 interface LoginForm { email: string; password: string; rememberMe: boolean; }
-interface SignupForm { firstName: string; lastName: string; email: string; phone: string; password: string; confirmPassword: string; agreeTerms: boolean; }
+interface SignupForm {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  password: string;
+  confirmPassword: string;
+  agreeTerms: boolean;
+  restaurantName?: string;
+  cuisine?: string;
+  address?: string;
+  vehicleType?: string;
+  licenseNumber?: string;
+}
 
 const ROLE_CONFIG = {
   CUSTOMER: {
@@ -76,7 +95,39 @@ export default function AuthPageClient() {
   const [isLoading, setIsLoading] = useState(false);
 
   const loginForm = useForm<LoginForm>({ defaultValues: { email: '', password: '', rememberMe: false } });
-  const signupForm = useForm<SignupForm>({ defaultValues: { firstName: '', lastName: '', email: '', phone: '', password: '', confirmPassword: '', agreeTerms: false } });
+  const signupForm = useForm<SignupForm>({
+    mode: 'onChange',
+    defaultValues: {
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      password: '',
+      confirmPassword: '',
+      agreeTerms: false,
+      restaurantName: '',
+      cuisine: '',
+      address: '',
+      vehicleType: '',
+      licenseNumber: '',
+    },
+  });
+
+  const watchedPassword = signupForm.watch('password');
+  const watchedConfirmPassword = signupForm.watch('confirmPassword');
+  const passwordRequirements = getPasswordRequirements(watchedPassword || '');
+  const passwordMeetsRequirements = isPasswordValid(watchedPassword || '');
+  const passwordsMatch =
+    Boolean(watchedPassword) &&
+    Boolean(watchedConfirmPassword) &&
+    watchedPassword === watchedConfirmPassword;
+  const canSubmitSignup = passwordMeetsRequirements && passwordsMatch;
+
+  useEffect(() => {
+    if (watchedConfirmPassword) {
+      void signupForm.trigger('confirmPassword');
+    }
+  }, [watchedPassword]); // eslint-disable-line react-hooks/exhaustive-deps -- re-check match when password changes
 
   const handleCopy = (text: string, fieldKey: string) => {
     navigator.clipboard.writeText(text);
@@ -93,82 +144,117 @@ export default function AuthPageClient() {
   };
 
   const onLoginSubmit = async (data: LoginForm) => {
-  setIsLoading(true);
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: data.email, password: data.password, role: activeRole }),
+      });
+      const result = await res.json();
 
-  try {
-    // API သို့ Login Data များ ပို့လွှတ်ခြင်း
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: data.email,
-        password: data.password,
-        role: activeRole, // ဥပမာ - 'RESTAURANT', 'CUSTOMER' စသည်
-      }),
-    });
+      if (res.ok && result.success) {
+        const sessionUser: SessionUser = {
+          id: String(result.user.id || ''),
+          firstName: String(result.user.firstName || ''),
+          lastName: String(result.user.lastName || ''),
+          email: String(result.user.email || ''),
+          phone: String(result.user.phone || ''),
+          role: String(result.user.role || activeRole),
+          avatarUrl: result.user.avatarUrl ?? null,
+        };
+        writeSession(sessionUser);
+        const name = `${sessionUser.firstName} ${sessionUser.lastName}`.trim();
+        toast.success(`Welcome back, ${name || sessionUser.email}!`);
+        router.push(ROLE_CONFIG[activeRole].route);
+        return;
+      }
 
-    const result = await response.json();
+      // Restaurant / driver waiting for approval — do not fall back to demo login
+      if (res.status === 403 && result.message) {
+        loginForm.setError('email', { message: result.message });
+        toast.error(result.message);
+        return;
+      }
 
-    if (!response.ok) {
-      // API ကနေ Error ပြန်လာရင် Form မှာ Error ပြပါမယ်
-      loginForm.setError('email', { message: result.message || 'Invalid credentials' });
+      // Demo accounts still work if MongoDB has no matching user
+      const matchingCred = DEMO_CREDENTIALS.find(
+        (c) => c.email === data.email && c.password === data.password && c.role === activeRole
+      );
+      if (matchingCred) {
+        const [firstName, ...rest] = matchingCred.name.split(' ');
+        writeSession({
+          id: '',
+          firstName: firstName || matchingCred.name,
+          lastName: rest.join(' '),
+          email: matchingCred.email,
+          phone: '',
+          role: matchingCred.role,
+          avatarUrl: null,
+        });
+        toast.success(`Welcome back, ${matchingCred.name}!`);
+        router.push(ROLE_CONFIG[activeRole].route);
+        return;
+      }
+
+      loginForm.setError('email', {
+        message: result.message || 'Invalid credentials — use a MongoDB account or demo login',
+      });
+    } catch {
+      loginForm.setError('email', { message: 'Login failed. Please try again.' });
+    } finally {
       setIsLoading(false);
+    }
+  };
+
+  const onSignupSubmit = async (data: SignupForm) => {
+    if (!isPasswordValid(data.password)) {
+      signupForm.setError('password', { message: PASSWORD_ERROR_MESSAGE });
       return;
     }
-
-    // Login အောင်မြင်ပါက Toast ပြပြီး သက်ဆိုင်ရာ Dashboard ကို သွားပါမယ်
-    toast.success(result.message);
-    setIsLoading(false);
-    
-    // Role အလိုက် သတ်မှတ်ထားတဲ့ Route ကို Redirect လုပ်ပါမယ်
-    router.push(ROLE_CONFIG[activeRole].route);
-
-  } catch (error: any) {
-    toast.error('Something went wrong. Please try again.');
-    setIsLoading(false);
-  }
-};
-const onSignupSubmit = async (data: SignupForm) => {
-  if (data.password !== data.confirmPassword) {
-    signupForm.setError('confirmPassword', { message: 'Passwords do not match' });
-    return;
-  }
-  
-  setIsLoading(true);
-
-  try {
-    // API သို့ Data များ ပို့လွှတ်ခြင်း
-    const response = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        firstName: data.firstName,
-        lastName: data.lastName,
-        email: data.email,
-        phone: data.phone,
-        password: data.password,
-        role: activeRole, // ဥပမာ - 'RESTAURANT'
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(result.message || 'Registration failed');
+    if (data.password !== data.confirmPassword) {
+      signupForm.setError('confirmPassword', { message: 'Passwords do not match' });
+      return;
     }
-
-    toast.success('Account created! Please sign in.');
-    setActiveTab('login');
-  } catch (error: any) {
-    toast.error(error.message);
-  } finally {
-    setIsLoading(false);
-  }
-};
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: data.firstName,
+          lastName: data.lastName,
+          email: data.email,
+          phone: data.phone,
+          password: data.password,
+          role: activeRole,
+          restaurantName: data.restaurantName,
+          cuisine: data.cuisine,
+          address: data.address,
+          vehicleType: data.vehicleType,
+          licenseNumber: data.licenseNumber,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        signupForm.setError('email', { message: result.message || 'Could not create account' });
+        return;
+      }
+      toast.success(
+        activeRole === 'RESTAURANT'
+          ? 'Restaurant application submitted! Waiting for admin approval.'
+          : activeRole === 'RIDER'
+            ? 'Driver application submitted! Waiting for admin approval.'
+            : 'Account created in MongoDB! Please sign in.'
+      );
+      setActiveTab('login');
+      loginForm.setValue('email', data.email);
+    } catch {
+      signupForm.setError('email', { message: 'Registration failed. Please try again.' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const cfg = ROLE_CONFIG[activeRole];
 
@@ -344,25 +430,117 @@ const onSignupSubmit = async (data: SignupForm) => {
                 <label className="block text-sm font-semibold text-foreground mb-1.5">Phone Number</label>
                 <input type="tel" className="input-field" placeholder="+1 (555) 000-0000" {...signupForm.register('phone', { required: 'Required' })} />
               </div>
+              {activeRole === 'RESTAURANT' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5">Restaurant Name</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="Burger Bliss"
+                      {...signupForm.register('restaurantName', { required: 'Restaurant name is required' })}
+                    />
+                    {signupForm.formState.errors.restaurantName && (
+                      <p className="text-xs text-danger mt-1">{signupForm.formState.errors.restaurantName.message}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5">Cuisine Type</label>
+                    <input type="text" className="input-field" placeholder="American · Burgers" {...signupForm.register('cuisine')} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5">Restaurant Address</label>
+                    <input type="text" className="input-field" placeholder="No. 42, Inya Road, Yangon" {...signupForm.register('address')} />
+                  </div>
+                </>
+              )}
+              {activeRole === 'RIDER' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5">Vehicle Type</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="Motorcycle / Scooter / Bicycle"
+                      {...signupForm.register('vehicleType', { required: 'Vehicle type is required' })}
+                    />
+                    {signupForm.formState.errors.vehicleType && (
+                      <p className="text-xs text-danger mt-1">{signupForm.formState.errors.vehicleType.message}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5">License Number</label>
+                    <input type="text" className="input-field" placeholder="Optional" {...signupForm.register('licenseNumber')} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5">Address</label>
+                    <input type="text" className="input-field" placeholder="Yangon" {...signupForm.register('address')} />
+                  </div>
+                </>
+              )}
               <div>
                 <label className="block text-sm font-semibold text-foreground mb-1.5">Password</label>
                 <div className="relative">
-                  <input type={showPassword ? 'text' : 'password'} className="input-field pr-10" placeholder="Min. 8 characters" {...signupForm.register('password', { required: 'Required', minLength: { value: 8, message: 'Minimum 8 characters' } })} />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="input-field pr-10"
+                    placeholder="Min. 8 characters"
+                    {...signupForm.register('password', {
+                      required: PASSWORD_ERROR_MESSAGE,
+                      validate: (value) => isPasswordValid(value) || PASSWORD_ERROR_MESSAGE,
+                    })}
+                  />
                   <button type="button" onClick={() => setShowPassword(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-                {signupForm.formState.errors.password && <p className="text-xs text-danger mt-1">{signupForm.formState.errors.password.message}</p>}
+                {signupForm.formState.errors.password && (
+                  <p className="text-xs text-danger mt-1">{signupForm.formState.errors.password.message}</p>
+                )}
+                <ul className="mt-2 space-y-1.5" aria-label="Password requirements">
+                  {passwordRequirements.map((req) => (
+                    <li
+                      key={req.id}
+                      className={`flex items-center gap-2 text-xs ${
+                        req.met ? 'text-success' : watchedPassword ? 'text-danger' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {req.met ? (
+                        <Check className="w-3.5 h-3.5 flex-shrink-0" />
+                      ) : (
+                        <Circle className="w-3.5 h-3.5 flex-shrink-0" />
+                      )}
+                      <span>{req.label}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-foreground mb-1.5">Confirm Password</label>
                 <div className="relative">
-                  <input type={showConfirmPassword ? 'text' : 'password'} className="input-field pr-10" placeholder="Repeat password" {...signupForm.register('confirmPassword', { required: 'Required' })} />
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className="input-field pr-10"
+                    placeholder="Repeat password"
+                    {...signupForm.register('confirmPassword', {
+                      required: 'Required',
+                      validate: (value) =>
+                        value === signupForm.getValues('password') || 'Passwords do not match',
+                    })}
+                  />
                   <button type="button" onClick={() => setShowConfirmPassword(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                     {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-                {signupForm.formState.errors.confirmPassword && <p className="text-xs text-danger mt-1">{signupForm.formState.errors.confirmPassword.message}</p>}
+                {signupForm.formState.errors.confirmPassword && (
+                  <p className="text-xs text-danger mt-1">{signupForm.formState.errors.confirmPassword.message}</p>
+                )}
+                {watchedConfirmPassword && !signupForm.formState.errors.confirmPassword && (
+                  <p className={`text-xs mt-1 flex items-center gap-1.5 ${passwordsMatch ? 'text-success' : 'text-danger'}`}>
+                    {passwordsMatch ? <Check className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                    {passwordsMatch ? 'Passwords match' : 'Passwords do not match'}
+                  </p>
+                )}
               </div>
               <label className="flex items-start gap-2 cursor-pointer">
                 <input type="checkbox" className="w-4 h-4 mt-0.5 rounded border-border accent-primary" {...signupForm.register('agreeTerms', { required: 'You must agree to continue' })} />
@@ -371,7 +549,7 @@ const onSignupSubmit = async (data: SignupForm) => {
                 </span>
               </label>
               {signupForm.formState.errors.agreeTerms && <p className="text-xs text-danger">{signupForm.formState.errors.agreeTerms.message}</p>}
-              <button type="submit" disabled={isLoading} className="btn-primary w-full py-3">
+              <button type="submit" disabled={isLoading || !canSubmitSignup} className="btn-primary w-full py-3 disabled:opacity-50 disabled:cursor-not-allowed">
                 {isLoading ? (
                   <span className="flex items-center gap-2 justify-center">
                     <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
