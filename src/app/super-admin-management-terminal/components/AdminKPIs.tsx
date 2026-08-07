@@ -84,36 +84,36 @@ const KPIS = [
 export default function AdminKPIs() {
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold text-white">Platform Overview</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+        <h1 className="text-lg sm:text-xl font-bold text-white">Platform Overview</h1>
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-success status-pulse" />
           <span className="text-xs text-zinc-400 font-medium">Live · Updated 16:13:54</span>
         </div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 xl:grid-cols-6 2xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
         {KPIS?.map((kpi) => (
           <div
             key={kpi?.id}
-            className={`rounded-xl p-4 border transition-all ${
+            className={`rounded-xl p-3.5 sm:p-4 border transition-all min-w-0 ${
               kpi?.alert
                 ? 'bg-danger/5 border-danger/20'
                 : kpi?.featured
                 ? 'bg-success/5 border-success/20' :'bg-zinc-900 border-zinc-800'
             }`}
           >
-            <div className="flex items-start justify-between mb-3">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${kpi?.iconBg}`}>
+            <div className="flex items-start justify-between mb-3 gap-2">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${kpi?.iconBg}`}>
                 <kpi.icon className={`w-4 h-4 ${kpi?.iconColor}`} />
               </div>
-              <span className={`flex items-center gap-0.5 text-xs font-bold px-1.5 py-0.5 rounded-full ${kpi?.trendUp ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+              <span className={`flex items-center gap-0.5 text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${kpi?.trendUp ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
                 {kpi?.trendUp ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
                 {kpi?.trend}
               </span>
             </div>
-            <p className="text-xl font-bold text-white font-tabular leading-tight mb-0.5">{kpi?.value}</p>
+            <p className="text-lg sm:text-xl font-bold text-white font-tabular leading-tight mb-0.5">{kpi?.value}</p>
             <p className="text-xs font-semibold text-zinc-400 mb-0.5">{kpi?.label}</p>
-            <p className="text-xs text-zinc-600 leading-tight">{kpi?.subValue}</p>
+            <p className="text-xs text-zinc-600 leading-tight line-clamp-2">{kpi?.subValue}</p>
           </div>
         ))}
       </div>

@@ -1,136 +1,185 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import Order from '@/models/Order';
-import RestaurantProfile from '@/models/RestaurantProfile';
+import { ObjectId } from 'mongodb';
+import { getDb } from '@/lib/mongodb';
 
-const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
+function mapOrderStatusForVendor(status: string): string {
+  if (status === 'PLACED') return 'PENDING';
+  if (status === 'OUT_FOR_DELIVERY' || status === 'READY') return 'READY';
+  if (status === 'PREPARING') return 'PREPARING';
+  return status;
+}
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   try {
-    await dbConnect();
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status');
+    const db = await getDb();
 
-    const body = await request.json();
-
-    if (!body?.items?.length || !body?.deliveryAddress?.address) {
-      return NextResponse.json(
-        { success: false, message: 'Invalid order data' },
-        { status: 400 }
-      );
+    const filter: Record<string, unknown> = {};
+    if (status) {
+      filter.status = status;
     }
 
-    const items = (body.items as Array<Record<string, unknown>>).map((item) => ({
-      id: String(item.id ?? ''),
-      name: String(item.name ?? ''),
-      options: String(item.options ?? ''),
-      unitPrice: Number(item.unitPrice) || 0,
-      quantity: Number(item.quantity) || 1,
-      restaurantName: item.restaurantName ? String(item.restaurantName) : undefined,
-      image: item.image ? String(item.image) : undefined,
-      imageAlt: item.imageAlt ? String(item.imageAlt) : undefined,
-      note: item.note ? String(item.note) : undefined,
-    }));
+    const orders = await db
+      .collection('orders')
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .toArray();
 
-    const orderNumber = `#FP-${Math.floor(1000 + Math.random() * 9000)}`;
-    const restaurantName = body.restaurantName || items[0]?.restaurantName || 'Restaurant';
-    const restaurantId = body.restaurantId || '';
-
-    // Resolve restaurant pin from profile (by id or name)
-    let restaurantCoords = { ...FALLBACK_COORDS };
-    try {
-      const profileQuery = restaurantId
-        ? { restaurantId }
-        : { restaurantName };
-      const profile = await RestaurantProfile.findOne(profileQuery).lean();
-      const lat = Number(profile?.location?.lat);
-      const lng = Number(profile?.location?.lng);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        restaurantCoords = { lat, lng };
-      } else if (!restaurantId && restaurantName) {
-        // Fallback: try case-insensitive name match
-        const byName = await RestaurantProfile.findOne({
-          restaurantName: new RegExp(`^${restaurantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
-        }).lean();
-        const nLat = Number(byName?.location?.lat);
-        const nLng = Number(byName?.location?.lng);
-        if (Number.isFinite(nLat) && Number.isFinite(nLng)) {
-          restaurantCoords = { lat: nLat, lng: nLng };
-        }
-      }
-    } catch (lookupError) {
-      console.warn('Restaurant coords lookup failed, using fallback:', lookupError);
-    }
-
-    const newOrder = await Order.create({
-      orderNumber,
-      restaurantName,
-      restaurantId,
-      customerName: body.customerName || body.deliveryAddress?.label || 'Customer',
-      items,
-      totals: body.totals,
-      deliveryAddress: body.deliveryAddress,
-      paymentMethod: body.paymentMethod || 'card',
-      status: 'PENDING',
-      restaurantCoords,
+    const mapped = orders.map((order) => {
+      const createdAt = order.createdAt ? new Date(order.createdAt) : new Date();
+      const items = Array.isArray(order.items) ? order.items : [];
+      return {
+        id: String(order._id),
+        orderNumber: order.orderNumber,
+        restaurant: order.restaurantName || 'Restaurant',
+        restaurantName: order.restaurantName || 'Restaurant',
+        customerName: order.deliveryAddress?.label || 'Customer',
+        itemsSummary: items
+          .map((item: { name?: string; quantity?: number }) =>
+            `${item.name || 'Item'} × ${item.quantity || 1}`
+          )
+          .join(', '),
+        itemsList: items.map(
+          (item: { name?: string; quantity?: number }) =>
+            `${item.name || 'Item'} × ${item.quantity || 1}`
+        ),
+        items,
+        totals: order.totals,
+        total: order.totals?.total ?? 0,
+        deliveryAddress: order.deliveryAddress,
+        paymentMethod: order.paymentMethod,
+        status: order.status,
+        vendorStatus: mapOrderStatusForVendor(order.status),
+        date: createdAt.toLocaleDateString('en-US'),
+        receivedAt: createdAt.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }),
+        createdAt: createdAt.toISOString(),
+        rating: order.rating ?? null,
+        prepTime: order.prepTime,
+      };
     });
 
-    return NextResponse.json({
-      success: true,
-      orderId: String(newOrder._id),
-      orderNumber,
-      estimatedDeliveryMinutes: 30,
-      message: `Order ${orderNumber} placed successfully`,
-    });
+    return NextResponse.json({ success: true, orders: mapped });
   } catch (error) {
-    console.error('Database Save Error:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { success: false, message: 'Unable to process order' },
+      { success: false, message: 'Unable to fetch orders', error: message },
       { status: 500 }
     );
   }
 }
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   try {
-    await dbConnect();
-    const { searchParams } = new URL(request.url);
-    const restaurantName = searchParams.get('restaurantName');
-    const restaurantId = searchParams.get('restaurantId');
-    const status = searchParams.get('status');
-    const riderId = searchParams.get('riderId');
-    const unassigned = searchParams.get('unassigned');
+    const body = await request.json();
 
-    const filter: Record<string, unknown> = {};
-    if (restaurantName) filter.restaurantName = restaurantName;
-    if (restaurantId) filter.restaurantId = restaurantId;
-
-    if (status) {
-      const statuses = status.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-      if (statuses.length === 1) {
-        filter.status = statuses[0];
-      } else if (statuses.length > 1) {
-        filter.status = { $in: statuses };
-      }
+    if (!body?.items?.length) {
+      return NextResponse.json(
+        { success: false, message: 'Cart is empty' },
+        { status: 400 }
+      );
     }
 
-    if (riderId) {
-      filter.riderId = riderId;
+    if (!body?.deliveryAddress?.address) {
+      return NextResponse.json(
+        { success: false, message: 'Delivery address is required' },
+        { status: 400 }
+      );
     }
 
-    // Available for riders: e.g. ?status=PREPARING&unassigned=true (or READY)
-    if (unassigned === 'true' || unassigned === '1') {
-      filter.$or = [
-        { riderId: { $exists: false } },
-        { riderId: null },
-        { riderId: '' },
-      ];
-    }
+    const db = await getDb();
+    const now = new Date().toISOString();
+    const orderNumber = `#FP-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(50);
-    return NextResponse.json({ success: true, orders });
+    const orderDoc = {
+      orderNumber,
+      restaurantName: body.restaurantName || body.items?.[0]?.restaurantName || 'Restaurant',
+      status: 'PLACED',
+      items: body.items,
+      totals: body.totals,
+      deliveryAddress: body.deliveryAddress,
+      paymentMethod: body.paymentMethod || 'cash',
+      estimatedDeliveryMinutes: 30,
+      createdAt: now,
+      updatedAt: now,
+      __v: 0,
+    };
+
+    const result = await db.collection('orders').insertOne(orderDoc);
+
+    return NextResponse.json({
+      success: true,
+      orderNumber,
+      estimatedDeliveryMinutes: 30,
+      message: `Order ${orderNumber} placed successfully`,
+      order: {
+        id: String(result.insertedId),
+        ...orderDoc,
+      },
+    });
   } catch (error) {
-    console.error('Orders GET error:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { success: false, message: 'Failed to fetch orders' },
+      { success: false, message: 'Unable to process order', error: message },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = await request.json();
+    const { id, status, prepTime } = body;
+
+    if (!id || !status) {
+      return NextResponse.json(
+        { success: false, message: 'Order id and status are required' },
+        { status: 400 }
+      );
+    }
+
+    const db = await getDb();
+    const update: Record<string, unknown> = {
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    if (typeof prepTime === 'number') {
+      update.prepTime = prepTime;
+    }
+
+    const filter = ObjectId.isValid(id)
+      ? { _id: new ObjectId(id) }
+      : { _id: id };
+
+    const result = await db.collection('orders').findOneAndUpdate(
+      filter,
+      { $set: update },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return NextResponse.json(
+        { success: false, message: 'Order not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      order: {
+        id: String(result._id),
+        ...result,
+        _id: undefined,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json(
+      { success: false, message: 'Unable to update order', error: message },
       { status: 500 }
     );
   }

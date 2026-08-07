@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Clock, Check, X, ChevronDown, AlertCircle, Bell } from 'lucide-react';
 import { toast } from 'sonner';
 
-type OrderStatus = 'PENDING' | 'PREPARING' | 'READY' | 'REJECTED';
+type OrderStatus = 'PENDING' | 'PREPARING' | 'READY';
 
 interface IncomingOrder {
   id: string;
@@ -17,151 +17,120 @@ interface IncomingOrder {
   prepTime?: number;
 }
 
-const RESTAURANT_NAME = 'Burger Bliss';
 const PREP_TIMES = [15, 20, 25, 30, 45];
-const POLL_MS = 10_000;
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   PENDING: 'bg-warning/10 text-warning',
   PREPARING: 'bg-info/10 text-info',
   READY: 'bg-success/10 text-success',
-  REJECTED: 'bg-danger/10 text-danger',
 };
 
-function formatReceivedAt(createdAt?: string) {
-  if (!createdAt) return '—';
-  try {
-    return new Date(createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '—';
-  }
-}
-
-function mapApiOrder(raw: Record<string, unknown>): IncomingOrder | null {
-  const status = String(raw.status || '').toUpperCase() as OrderStatus;
-  if (status === 'REJECTED' || status === 'DELIVERED' || status === 'CANCELLED') {
-    return null;
-  }
-  if (!['PENDING', 'PREPARING', 'READY'].includes(status)) {
-    return null;
-  }
-
-  const items = Array.isArray(raw.items)
-    ? (raw.items as Array<{ name?: string; quantity?: number; options?: string }>).map((item) => {
-        const qty = item.quantity ?? 1;
-        const opts = item.options ? ` (${item.options})` : '';
-        return `${item.name || 'Item'} × ${qty}${opts}`;
-      })
-    : [];
-
-  const totals = (raw.totals || {}) as { total?: number };
-  const id = String(raw._id ?? '');
-
-  return {
-    id,
-    orderNumber: String(raw.orderNumber || `#${id.slice(-4)}`),
-    customerName: String(raw.customerName || 'Customer'),
-    items,
-    total: Number(totals.total) || 0,
-    status: status as OrderStatus,
-    receivedAt: formatReceivedAt(raw.createdAt as string | undefined),
-    prepTime: raw.prepTime != null ? Number(raw.prepTime) : undefined,
-  };
+function toVendorStatus(status: string): OrderStatus | null {
+  if (status === 'PLACED' || status === 'PENDING') return 'PENDING';
+  if (status === 'PREPARING') return 'PREPARING';
+  if (status === 'READY' || status === 'OUT_FOR_DELIVERY') return 'READY';
+  return null;
 }
 
 export default function OrderQueue() {
   const [orders, setOrders] = useState<IncomingOrder[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [prepTimeSelects, setPrepTimeSelects] = useState<Record<string, number>>({});
   const [openPrepSelect, setOpenPrepSelect] = useState<string | null>(null);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  const fetchOrders = useCallback(async (showSpinner = false) => {
-    if (showSpinner) setIsLoading(true);
+  const loadOrders = async () => {
     try {
-      const res = await fetch(
-        `/api/orders?restaurantName=${encodeURIComponent(RESTAURANT_NAME)}`
-      );
+      const res = await fetch('/api/orders');
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to fetch');
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to load orders');
+      }
 
-      const mapped = (Array.isArray(data.orders) ? data.orders : [])
-        .map((raw: Record<string, unknown>) => mapApiOrder(raw))
+      const mapped: IncomingOrder[] = (data.orders || [])
+        .map((order: {
+          id: string;
+          orderNumber: string;
+          customerName: string;
+          itemsList: string[];
+          total: number;
+          status: string;
+          vendorStatus: string;
+          receivedAt: string;
+          prepTime?: number;
+        }) => {
+          const status = toVendorStatus(order.vendorStatus || order.status);
+          if (!status) return null;
+          return {
+            id: order.id,
+            orderNumber: order.orderNumber,
+            customerName: order.customerName,
+            items: order.itemsList || [],
+            total: order.total,
+            status,
+            receivedAt: order.receivedAt,
+            prepTime: order.prepTime,
+          };
+        })
         .filter(Boolean) as IncomingOrder[];
 
       setOrders(mapped);
-    } catch (error) {
-      console.error(error);
-      if (showSpinner) toast.error('Failed to load order queue');
+    } catch {
+      toast.error('Could not load orders from MongoDB');
+      setOrders([]);
     } finally {
-      if (showSpinner) setIsLoading(false);
+      setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    fetchOrders(true);
-    const interval = setInterval(() => fetchOrders(false), POLL_MS);
-    return () => clearInterval(interval);
-  }, [fetchOrders]);
+    loadOrders();
+  }, []);
 
-  const patchOrder = async (
-    orderId: string,
-    body: { status: string; prepTime?: number }
-  ) => {
-    const res = await fetch(`/api/orders/${orderId}`, {
+  const updateOrderStatus = async (orderId: string, status: string, prepTime?: number) => {
+    const res = await fetch('/api/orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ id: orderId, status, prepTime }),
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.message || 'Failed to update order');
     }
-    return data.order as Record<string, unknown>;
   };
 
   const acceptOrder = async (orderId: string) => {
     const prepTime = prepTimeSelects[orderId] || 25;
-    setUpdatingId(orderId);
     try {
-      await patchOrder(orderId, { status: 'PREPARING', prepTime });
+      await updateOrderStatus(orderId, 'PREPARING', prepTime);
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: 'PREPARING', prepTime } : o))
       );
       toast.success(`Order accepted — ${prepTime} min prep time set`);
       setOpenPrepSelect(null);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to accept order');
-    } finally {
-      setUpdatingId(null);
+    } catch {
+      toast.error('Could not accept order');
     }
   };
 
   const rejectOrder = async (orderId: string, orderNumber: string) => {
-    setUpdatingId(orderId);
     try {
-      await patchOrder(orderId, { status: 'REJECTED' });
+      await updateOrderStatus(orderId, 'CANCELLED');
       setOrders((prev) => prev.filter((o) => o.id !== orderId));
       toast.error(`Order ${orderNumber} rejected`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to reject order');
-    } finally {
-      setUpdatingId(null);
+    } catch {
+      toast.error('Could not reject order');
     }
   };
 
   const markReady = async (orderId: string) => {
-    setUpdatingId(orderId);
     try {
-      await patchOrder(orderId, { status: 'READY' });
+      await updateOrderStatus(orderId, 'READY');
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: 'READY' } : o))
       );
       toast.success('Order marked ready for pickup');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to mark ready');
-    } finally {
-      setUpdatingId(null);
+    } catch {
+      toast.error('Could not update order');
     }
   };
 
@@ -183,46 +152,33 @@ export default function OrderQueue() {
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-hide divide-y divide-border">
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground">
-            <div className="h-7 w-7 animate-spin rounded-full border-2 border-restaurant border-t-transparent" />
-            <p className="text-sm font-medium">Loading orders…</p>
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <p className="text-sm text-muted-foreground">Loading orders from MongoDB...</p>
           </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <ShoppingBagIcon />
             <p className="font-semibold text-foreground mt-3">No active orders</p>
-            <p className="text-sm text-muted-foreground">New orders will appear here in real-time</p>
+            <p className="text-sm text-muted-foreground">New orders will appear here from MongoDB</p>
           </div>
         ) : (
           orders.map((order) => (
-            <div
-              key={order.id}
-              className={`p-4 transition-colors ${order.status === 'PENDING' ? 'bg-warning/5' : ''}`}
-            >
+            <div key={order.id} className={`p-4 transition-colors ${order.status === 'PENDING' ? 'bg-warning/5' : ''}`}>
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-foreground">{order.orderNumber}</span>
-                    <span className={`status-badge ${STATUS_STYLES[order.status]}`}>
-                      {order.status}
-                    </span>
+                    <span className={`status-badge ${STATUS_STYLES[order.status]}`}>{order.status}</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {order.customerName} · {order.receivedAt}
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{order.customerName} · {order.receivedAt}</p>
                 </div>
-                <span className="text-sm font-bold font-tabular text-foreground">
-                  ${order.total.toFixed(2)}
-                </span>
+                <span className="text-sm font-bold font-tabular text-foreground">${order.total.toFixed(2)}</span>
               </div>
 
               <ul className="space-y-0.5 mb-3">
                 {order.items.map((item, ii) => (
-                  <li
-                    key={`item-${order.id}-${ii}`}
-                    className="text-xs text-muted-foreground flex items-center gap-1"
-                  >
+                  <li key={`item-${order.id}-${ii}`} className="text-xs text-muted-foreground flex items-center gap-1">
                     <span className="w-1 h-1 rounded-full bg-muted-foreground flex-shrink-0" />
                     {item}
                   </li>
@@ -233,10 +189,7 @@ export default function OrderQueue() {
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1">
                     <button
-                      type="button"
-                      onClick={() =>
-                        setOpenPrepSelect(openPrepSelect === order.id ? null : order.id)
-                      }
+                      onClick={() => setOpenPrepSelect(openPrepSelect === order.id ? null : order.id)}
                       className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold bg-muted rounded-lg hover:bg-border transition-colors"
                     >
                       <div className="flex items-center gap-1.5">
@@ -250,16 +203,8 @@ export default function OrderQueue() {
                         {PREP_TIMES.map((t) => (
                           <button
                             key={`prep-${order.id}-${t}`}
-                            type="button"
-                            onClick={() => {
-                              setPrepTimeSelects((p) => ({ ...p, [order.id]: t }));
-                              setOpenPrepSelect(null);
-                            }}
-                            className={`w-full px-3 py-2 text-xs font-semibold text-left hover:bg-muted transition-colors ${
-                              (prepTimeSelects[order.id] || 25) === t
-                                ? 'bg-teal-50 text-restaurant'
-                                : ''
-                            }`}
+                            onClick={() => { setPrepTimeSelects((p) => ({ ...p, [order.id]: t })); setOpenPrepSelect(null); }}
+                            className={`w-full px-3 py-2 text-xs font-semibold text-left hover:bg-muted transition-colors ${(prepTimeSelects[order.id] || 25) === t ? 'bg-teal-50 text-restaurant' : ''}`}
                           >
                             {t} minutes
                           </button>
@@ -268,18 +213,14 @@ export default function OrderQueue() {
                     )}
                   </div>
                   <button
-                    type="button"
-                    disabled={updatingId === order.id}
                     onClick={() => acceptOrder(order.id)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors active:scale-95 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors active:scale-95"
                   >
                     <Check className="w-3.5 h-3.5" /> Accept
                   </button>
                   <button
-                    type="button"
-                    disabled={updatingId === order.id}
                     onClick={() => rejectOrder(order.id, order.orderNumber)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-danger/10 text-danger rounded-lg hover:bg-danger/20 transition-colors active:scale-95 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-danger/10 text-danger rounded-lg hover:bg-danger/20 transition-colors active:scale-95"
                   >
                     <X className="w-3.5 h-3.5" /> Reject
                   </button>
@@ -293,10 +234,8 @@ export default function OrderQueue() {
                     {order.prepTime} min prep time
                   </div>
                   <button
-                    type="button"
-                    disabled={updatingId === order.id}
                     onClick={() => markReady(order.id)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors active:scale-95 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors active:scale-95"
                   >
                     <Check className="w-3.5 h-3.5" /> Mark Ready
                   </button>

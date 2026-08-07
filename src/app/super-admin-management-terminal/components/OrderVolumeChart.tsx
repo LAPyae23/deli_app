@@ -5,6 +5,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { useAdminTheme } from './AdminThemeContext';
 
 const HOURLY_DATA = [
   { hour: '06:00', orders: 12, gmv: 420 },
@@ -49,6 +50,9 @@ function ChartTooltip({ active, payload, label }: CustomTooltipProps) {
 
 export default function OrderVolumeChart() {
   const [metric, setMetric] = useState<'orders' | 'gmv'>('orders');
+  const { isLight } = useAdminTheme();
+  const axisFill = isLight ? '#71717a' : '#52525B';
+  const gridStroke = isLight ? 'rgba(24,24,27,0.08)' : 'rgba(255,255,255,0.04)';
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
@@ -72,18 +76,24 @@ export default function OrderVolumeChart() {
       <div className="p-5">
         <ResponsiveContainer width="100%" height={220}>
           <AreaChart data={HOURLY_DATA} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" vertical={false} />
+            <defs>
+              <linearGradient id="adminGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--admin)" stopOpacity={isLight ? 0.25 : 0.35} />
+                <stop offset="100%" stopColor="var(--admin)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke={gridStroke} strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="hour"
               axisLine={false}
               tickLine={false}
-              tick={{ fill: '#52525B', fontSize: 10, fontWeight: 500 }}
+              tick={{ fill: axisFill, fontSize: 10, fontWeight: 500 }}
               interval={2}
             />
             <YAxis
               axisLine={false}
               tickLine={false}
-              tick={{ fill: '#52525B', fontSize: 10 }}
+              tick={{ fill: axisFill, fontSize: 10 }}
               width={40}
             />
             <Tooltip content={<ChartTooltip />} />

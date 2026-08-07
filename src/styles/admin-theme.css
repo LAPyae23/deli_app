@@ -1,0 +1,98 @@
+/* Light theme for Super Admin Terminal — orange & white */
+
+.admin-theme-light {
+  color-scheme: light;
+}
+
+/* Same element OR descendant (root has both classes) */
+.admin-theme-light.bg-zinc-950,
+.admin-theme-light .bg-zinc-950 {
+  background-color: #fff7ed !important; /* orange-50 */
+}
+
+.admin-theme-light.bg-zinc-900,
+.admin-theme-light .bg-zinc-900 {
+  background-color: #ffffff !important;
+}
+
+.admin-theme-light .bg-zinc-800 {
+  background-color: #ffedd5 !important; /* orange-100 */
+}
+
+.admin-theme-light .bg-zinc-800\/50 {
+  background-color: rgb(255 237 213 / 0.7) !important;
+}
+
+.admin-theme-light .bg-zinc-700 {
+  background-color: #fed7aa !important; /* orange-200 */
+}
+
+.admin-theme-light .bg-zinc-600 {
+  background-color: #fdba74 !important; /* orange-300 */
+}
+
+.admin-theme-light.border-zinc-800,
+.admin-theme-light .border-zinc-800,
+.admin-theme-light .border-zinc-700,
+.admin-theme-light .divide-zinc-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #fed7aa !important; /* orange-200 */
+}
+
+.admin-theme-light .text-white {
+  color: #1c1917 !important;
+}
+
+.admin-theme-light .bg-admin.text-white,
+.admin-theme-light .bg-admin .text-white,
+.admin-theme-light button.bg-admin {
+  color: #ffffff !important;
+}
+
+.admin-theme-light .admin-theme-toggle-icon {
+  color: #ffffff !important;
+}
+
+.admin-theme-light .text-zinc-200 {
+  color: #292524 !important;
+}
+
+.admin-theme-light .text-zinc-300 {
+  color: #44403c !important;
+}
+
+.admin-theme-light .text-zinc-400,
+.admin-theme-light .text-zinc-500 {
+  color: #78716c !important;
+}
+
+.admin-theme-light .text-zinc-600,
+.admin-theme-light .text-zinc-700 {
+  color: #a8a29e !important;
+}
+
+.admin-theme-light .hover\:bg-zinc-800:hover {
+  background-color: #ffedd5 !important;
+}
+
+.admin-theme-light .hover\:bg-zinc-800\/50:hover {
+  background-color: rgb(255 237 213 / 0.9) !important;
+}
+
+.admin-theme-light .hover\:bg-zinc-700:hover {
+  background-color: #fed7aa !important;
+}
+
+.admin-theme-light .hover\:text-zinc-200:hover,
+.admin-theme-light .hover\:text-zinc-300:hover,
+.admin-theme-light .hover\:text-white:hover {
+  color: #1c1917 !important;
+}
+
+.admin-theme-light .card-shadow-md {
+  box-shadow: 0 4px 16px rgba(154, 52, 18, 0.08);
+}
+
+/* Stronger card surfaces in light mode */
+.admin-theme-light main .bg-zinc-900 {
+  box-shadow: 0 1px 3px rgba(154, 52, 18, 0.06);
+}
