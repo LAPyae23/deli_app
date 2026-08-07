@@ -10,7 +10,9 @@ import {
   Circle,
   CheckCircle2,
   Printer,
+  Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import type { CartItem, DeliveryAddressInfo } from '../types';
 
 export type PaymentMethod = 'cash' | 'bank';
@@ -32,6 +34,10 @@ interface OrderReceiptModalProps {
   onConfirmPayment: () => Promise<string | null>;
   restaurantName?: string;
   formatMoney?: (usd: number) => string;
+  onDoneRedirect?: () => void;
+  savedAddresses?: DeliveryAddressInfo[];
+  onDeliveryAddressChange?: (address: DeliveryAddressInfo) => void;
+  onOpenAddressPicker?: () => void;
 }
 
 function defaultMoney(n: number) {
@@ -54,12 +60,17 @@ export default function OrderReceiptModal({
   onConfirmPayment,
   restaurantName,
   formatMoney = defaultMoney,
+  onDoneRedirect,
+  savedAddresses = [],
+  onDeliveryAddressChange,
+  onOpenAddressPicker,
 }: OrderReceiptModalProps) {
   const [step, setStep] = useState<'checkout' | 'slip'>('checkout');
   const [orderNumber, setOrderNumber] = useState('');
   const [slipItems, setSlipItems] = useState<CartItem[]>([]);
   const [slipTotal, setSlipTotal] = useState(0);
   const [slipPayment, setSlipPayment] = useState<PaymentMethod>('cash');
+  const [locating, setLocating] = useState(false);
   const [slipMeta, setSlipMeta] = useState({
     subtotal: 0,
     deliveryFee: 0,
@@ -74,12 +85,90 @@ export default function OrderReceiptModal({
     if (isOpen) {
       setStep('checkout');
       setOrderNumber('');
+      setLocating(false);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
   const itemCount = items.reduce((s, i) => s + i.quantity, 0);
+  const addressOptions =
+    savedAddresses.length > 0
+      ? savedAddresses.some((a) => a.label === deliveryAddress.label)
+        ? savedAddresses
+        : [deliveryAddress, ...savedAddresses]
+      : [deliveryAddress];
+
+  const useCurrentLocation = () => {
+    if (!onDeliveryAddressChange) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      toast.error('Geolocation is not supported on this device');
+      return;
+    }
+
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        try {
+          const res = await fetch(
+            'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' +
+              lat +
+              '&lon=' +
+              lng,
+            { headers: { Accept: 'application/json' } }
+          );
+          const data = await res.json();
+          const address =
+            (data && data.display_name) ||
+            `Current location · ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+          onDeliveryAddressChange({
+            label: 'CURRENT',
+            address,
+            detail: 'Detected via GPS',
+            lat,
+            lng,
+          });
+          toast.success('Using your current location');
+        } catch {
+          onDeliveryAddressChange({
+            label: 'CURRENT',
+            address: `Current location · ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+            detail: 'Detected via GPS',
+            lat,
+            lng,
+          });
+          toast.success('Location set from GPS coordinates');
+        } finally {
+          setLocating(false);
+        }
+      },
+      (error) => {
+        console.warn(error);
+        setLocating(false);
+        toast.error('Unable to get current location. Check browser permissions.');
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+    );
+  };
+
+  const handleAddressSelect = (value: string) => {
+    if (value === 'MAP_PICK') {
+      onOpenAddressPicker?.();
+      return;
+    }
+    if (value === 'CURRENT_LOC') {
+      useCurrentLocation();
+      return;
+    }
+
+    const match = addressOptions.find((a) => a.label === value);
+    if (match && onDeliveryAddressChange) {
+      onDeliveryAddressChange(match);
+    }
+  };
 
   const handleConfirm = async () => {
     // Snapshot before parent clears cart
@@ -118,6 +207,7 @@ export default function OrderReceiptModal({
   const handleDone = () => {
     setStep('checkout');
     setOrderNumber('');
+    onDoneRedirect?.();
     onClose();
   };
 
@@ -278,14 +368,37 @@ export default function OrderReceiptModal({
         <div className="flex-1 overflow-y-auto scrollbar-hide px-5 py-4 space-y-4">
           <div className="flex items-start gap-3 p-3 bg-muted/40 rounded-xl border border-border">
             <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center flex-shrink-0">
-              <MapPin className="w-4 h-4 text-customer" />
+              {locating ? (
+                <Loader2 className="w-4 h-4 text-customer animate-spin" />
+              ) : (
+                <MapPin className="w-4 h-4 text-customer" />
+              )}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1 space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Delivery
               </p>
-              <p className="text-sm font-semibold text-foreground">{deliveryAddress.label}</p>
-              <p className="text-xs text-muted-foreground">{deliveryAddress.address}</p>
+              <select
+                className="input-field w-full py-2.5 text-sm"
+                value={
+                  addressOptions.some((a) => a.label === deliveryAddress.label)
+                    ? deliveryAddress.label
+                    : deliveryAddress.label || addressOptions[0]?.label || ''
+                }
+                disabled={locating || isPlacing}
+                onChange={(e) => handleAddressSelect(e.target.value)}
+              >
+                {addressOptions.map((addr) => (
+                  <option key={`${addr.label}-${addr.lat}-${addr.lng}`} value={addr.label}>
+                    {addr.label} - {addr.address}
+                  </option>
+                ))}
+                <option value="CURRENT_LOC">📍 Use Current Location</option>
+                <option value="MAP_PICK">➕ Pick from Map</option>
+              </select>
+              <p className="text-xs text-muted-foreground line-clamp-2">
+                {locating ? 'Detecting your location…' : deliveryAddress.address}
+              </p>
             </div>
           </div>
 

@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   ShoppingCart,
   Briefcase,
+  MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppImage from '@/components/ui/AppImage';
@@ -38,8 +39,12 @@ interface CartPanelProps {
   removePurchasedItems: (ids: string[]) => void;
   restaurantName?: string;
   deliveryAddress: DeliveryAddressInfo;
+  savedAddresses?: DeliveryAddressInfo[];
+  onDeliveryAddressChange?: (address: DeliveryAddressInfo) => void;
+  onOpenAddressPicker?: () => void;
   onBack?: () => void;
   onGoDiscover?: () => void;
+  onOrderSuccess?: (orderId: string) => void;
 }
 
 export default function CartPanel({
@@ -49,14 +54,19 @@ export default function CartPanel({
   removePurchasedItems,
   restaurantName,
   deliveryAddress,
+  savedAddresses = [],
+  onDeliveryAddressChange,
+  onOpenAddressPicker,
   onBack,
   onGoDiscover,
+  onOrderSuccess,
 }: CartPanelProps) {
   const [selectedItems, setSelectedItems] = useState<string[]>(() => items.map((i) => i.id));
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [isPlacing, setIsPlacing] = useState(false);
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
+  const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedItems((prev) => {
@@ -153,6 +163,7 @@ export default function CartPanel({
       setSelectedItems((prev) => prev.filter((id) => !purchasedIds.includes(id)));
 
       toast.success(`Order ${result.orderNumber} placed successfully`);
+      setPlacedOrderId(result.orderId);
       return result.orderNumber;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to place order');
@@ -201,6 +212,53 @@ export default function CartPanel({
           </div>
         ) : (
           <>
+            <div className="flex-shrink-0 border-b border-border bg-white px-3 py-3">
+              <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 p-3">
+                <MapPin className="mt-0.5 h-4 w-4 flex-shrink-0 text-customer" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                    {deliveryAddress.label || 'Delivery'}
+                  </p>
+                  <p className="mt-0.5 truncate text-sm font-semibold text-foreground">
+                    {deliveryAddress.address}
+                  </p>
+                  {savedAddresses.length > 1 && onDeliveryAddressChange && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {savedAddresses.map((a) => {
+                        const isActive =
+                          a.lat === deliveryAddress.lat &&
+                          a.lng === deliveryAddress.lng &&
+                          a.label === deliveryAddress.label;
+                        return (
+                          <button
+                            key={`${a.label}-${a.lat}-${a.lng}`}
+                            type="button"
+                            onClick={() => onDeliveryAddressChange(a)}
+                            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                              isActive
+                                ? 'border-customer bg-orange-50 text-customer'
+                                : 'border-border bg-card text-muted-foreground hover:border-customer/40'
+                            }`}
+                          >
+                            {a.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {onOpenAddressPicker && (
+                  <button
+                    type="button"
+                    onClick={onOpenAddressPicker}
+                    className="flex-shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] font-semibold text-customer hover:bg-orange-50"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="flex-1 overflow-y-auto scrollbar-hide p-3 space-y-3 pb-24">
               {groups.map(([shopName, shopItems]) => {
                 const shopAllSelected = shopItems.every((i) => selectedItems.includes(i.id));
@@ -249,13 +307,23 @@ export default function CartPanel({
 
                             <div className="relative w-20 h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                               {item.image ? (
-                                <AppImage
-                                  src={item.image}
-                                  alt={item.imageAlt || item.name}
-                                  fill
-                                  className="object-cover"
-                                  sizes="80px"
-                                />
+                                item.image.startsWith('data:') ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={item.image}
+                                    alt={item.imageAlt || item.name}
+                                    className="absolute inset-0 h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <AppImage
+                                    src={item.image}
+                                    alt={item.imageAlt || item.name}
+                                    fill
+                                    className="object-cover"
+                                    sizes="80px"
+                                    unoptimized
+                                  />
+                                )
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center">
                                   <ShoppingCart className="w-6 h-6 text-border" />
@@ -408,6 +476,13 @@ export default function CartPanel({
           restaurantName || selectedCartItems[0]?.restaurantName
         }
         formatMoney={formatMMK}
+        savedAddresses={savedAddresses}
+        onDeliveryAddressChange={onDeliveryAddressChange}
+        onOpenAddressPicker={onOpenAddressPicker}
+        onDoneRedirect={() => {
+          if (placedOrderId && onOrderSuccess) onOrderSuccess(placedOrderId);
+          setPlacedOrderId(null);
+        }}
       />
     </>
   );

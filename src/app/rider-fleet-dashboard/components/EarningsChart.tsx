@@ -17,6 +17,7 @@ const WEEKLY_DATA = [
 ];
 
 const TODAY_INDEX = 6;
+const WEEKLY_TOTAL = WEEKLY_DATA.reduce((s, d) => s + d.earnings, 0);
 
 interface TooltipProps {
   active?: boolean;
@@ -27,9 +28,11 @@ interface TooltipProps {
 function CustomTooltip({ active, payload, label }: TooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2">
-      <p className="text-xs text-zinc-400 mb-0.5">{label}</p>
-      <p className="text-sm font-bold text-white font-tabular">${payload[0].value.toFixed(2)}</p>
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-md">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="mt-0.5 text-sm font-bold text-slate-900 font-tabular">
+        ${payload[0].value.toFixed(2)}
+      </p>
     </div>
   );
 }
@@ -37,23 +40,36 @@ function CustomTooltip({ active, payload, label }: TooltipProps) {
 export default function EarningsChart() {
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-sm font-bold text-white">Weekly Earnings</p>
-        <p className="text-sm font-bold text-success font-tabular">
-          ${WEEKLY_DATA.reduce((s, d) => s + d.earnings, 0).toFixed(2)}
-        </p>
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold tracking-tight text-slate-900">Weekly Earnings</p>
+          <p className="mt-0.5 text-[11px] text-slate-400">Last 7 days</p>
+        </div>
+        <div className="text-right">
+          <p className="text-lg font-bold leading-none text-success font-tabular sm:text-xl">
+            ${WEEKLY_TOTAL.toFixed(2)}
+          </p>
+          <p className="mt-1 text-[10px] font-medium text-slate-400">Total</p>
+        </div>
       </div>
-      <ResponsiveContainer width="100%" height={120}>
-        <BarChart data={WEEKLY_DATA} barSize={24}>
-          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
-          <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#71717A', fontSize: 11, fontWeight: 500 }} />
+
+      <ResponsiveContainer width="100%" height={160}>
+        <BarChart data={WEEKLY_DATA} barSize={24} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="#E2E8F0" strokeDasharray="4 4" />
+          <XAxis
+            dataKey="day"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: '#94A3B8', fontSize: 11, fontWeight: 500 }}
+            dy={6}
+          />
           <YAxis hide />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-          <Bar dataKey="earnings" radius={[6, 6, 0, 0]}>
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(99,102,241,0.04)' }} />
+          <Bar dataKey="earnings" radius={[8, 8, 4, 4]}>
             {WEEKLY_DATA.map((_, index) => (
               <Cell
                 key={`cell-earn-${index}`}
-                fill={index === TODAY_INDEX ? 'var(--rider)' : 'rgba(99,102,241,0.3)'}
+                fill={index === TODAY_INDEX ? 'var(--rider)' : 'rgba(99,102,241,0.18)'}
               />
             ))}
           </Bar>

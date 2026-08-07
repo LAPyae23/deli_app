@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Home, ShoppingCart, ClipboardList, MapPin, Heart, Settings, LogOut, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Home, ShoppingCart, ClipboardList, Heart, LogOut, ChevronLeft, ChevronRight, Package, User } from 'lucide-react';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
 import CustomerTopbar from '@/components/CustomerTopbar';
@@ -12,42 +12,26 @@ import OrderHistory from './components/OrderHistory';
 import CartPanel from './components/CartPanel';
 import OrderConfirmationScreen from './components/OrderConfirmationScreen';
 import AddressPickerModal, { type PickedAddress } from './components/AddressPickerModal';
+import ParcelDeliveryPanel from './components/ParcelDeliveryPanel';
+import CustomerProfile from './components/CustomerProfile';
 import type { CartItem, DeliveryAddressInfo, OrderTotals, Restaurant } from './types';
 
-type CustomerTab = 'discover' | 'orders' | 'cart' | 'addresses' | 'favorites';
+type CustomerTab = 'discover' | 'orders' | 'cart' | 'favorites' | 'parcels' | 'profile';
 
-const INITIAL_CART: CartItem[] = [
-  {
-    id: 'cart-item-001',
-    name: 'Smash Burger',
-    options: 'Extra cheese, No pickles',
-    unitPrice: 13.99,
-    quantity: 2,
-    restaurantName: 'Burger Bliss',
-    image: 'https://img.rocket.new/generatedImages/rocket_gen_img_197cceb39-1772091574254.png',
-    imageAlt: 'Smash burger',
-  },
-  {
-    id: 'cart-item-002',
-    name: 'Truffle Fries',
-    options: 'Large size',
-    unitPrice: 6.49,
-    quantity: 1,
-    restaurantName: 'Burger Bliss',
-    image: 'https://images.unsplash.com/photo-1576107233129-db4d6d4c4c0a',
-    imageAlt: 'Truffle fries',
-  },
-  {
-    id: 'cart-item-003',
-    name: 'Coke Zero',
-    options: 'No ice',
-    unitPrice: 2.99,
-    quantity: 2,
-    restaurantName: 'Burger Bliss',
-    image: 'https://images.unsplash.com/photo-1629203851129-c62c4c7f5d5e',
-    imageAlt: 'Coke Zero',
-  },
-];
+const CART_STORAGE_KEY = 'fooddash-customer-cart';
+const CUSTOMER_ID = 'customer-demo-id';
+
+type CustomerUser = {
+  firstName: string;
+  lastName: string;
+  profileImage: string;
+};
+
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: 'Customer', lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
 
 const DEFAULT_DELIVERY: DeliveryAddressInfo = {
   label: 'HOME',
@@ -90,7 +74,10 @@ interface TabContentProps {
   confirmationItems: CartItem[];
   onConfirmOrder: (totals: OrderTotals) => void;
   onBackFromConfirmation: () => void;
-  onOrderSuccess: (orderNumber: string) => void;
+  onOrderSuccess: (orderId: string) => void;
+  onProfileUpdate: (userData: CustomerUser) => void;
+  activeOrderId: string | null;
+  onClearActiveOrder: () => void;
 }
 
 function CustomerTabContent({
@@ -116,6 +103,9 @@ function CustomerTabContent({
   onConfirmOrder,
   onBackFromConfirmation,
   onOrderSuccess,
+  onProfileUpdate,
+  activeOrderId,
+  onClearActiveOrder,
 }: TabContentProps) {
   const [addressPickerOpen, setAddressPickerOpen] = useState(false);
 
@@ -130,8 +120,12 @@ function CustomerTabContent({
       removePurchasedItems={removePurchasedItems}
       restaurantName={restaurantName}
       deliveryAddress={deliveryAddress}
+      savedAddresses={savedAddresses}
+      onDeliveryAddressChange={onDeliveryAddressChange}
+      onOpenAddressPicker={() => setAddressPickerOpen(true)}
       onBack={onGoDiscover}
       onGoDiscover={onGoDiscover}
+      onOrderSuccess={onOrderSuccess}
     />
   );
 
@@ -181,77 +175,43 @@ function CustomerTabContent({
       }
       return (
         <>
-          <LiveOrderTracker />
+          {activeOrderId && (
+            <LiveOrderTracker
+              activeOrderId={activeOrderId}
+              onDismiss={onClearActiveOrder}
+            />
+          )}
           <RestaurantGrid onSelectRestaurant={onSelectRestaurant} />
         </>
       );
     case 'orders':
       return <OrderHistory />;
+    case 'parcels':
+      return <ParcelDeliveryPanel />;
     case 'cart':
       return (
         <div className="flex flex-col items-stretch max-w-lg mx-auto w-full min-w-0">
           {cartPanel}
         </div>
       );
-    case 'addresses':
+    case 'favorites':
+      return (
+        <div className="bg-card rounded-2xl border border-border p-6 sm:p-8 text-center">
+          <Heart className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+          <h3 className="text-lg font-bold mb-1">Favorite Restaurants</h3>
+          <p className="text-muted-foreground text-sm">Your saved restaurants will appear here.</p>
+        </div>
+      );
+    case 'profile':
       return (
         <>
-          <div className="bg-card rounded-2xl border border-border p-6 sm:p-8">
-            <div className="text-center mb-6">
-              <MapPin className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-              <h3 className="text-lg font-bold mb-1">Saved Addresses</h3>
-              <p className="text-muted-foreground text-sm">
-                Manage delivery locations around Yangon, Myanmar.
-              </p>
-            </div>
-
-            <div className="space-y-3 text-left max-w-md mx-auto">
-              {savedAddresses.map((a) => {
-                const isActive =
-                  a.lat === deliveryAddress.lat &&
-                  a.lng === deliveryAddress.lng &&
-                  a.label === deliveryAddress.label;
-                return (
-                  <button
-                    key={`${a.label}-${a.lat}-${a.lng}`}
-                    type="button"
-                    onClick={() => {
-                      onSelectSavedAddress(a);
-                      toast.success(`Delivering to ${a.label}`);
-                    }}
-                    className={`w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all ${
-                      isActive
-                        ? 'bg-orange-50 border-customer'
-                        : 'bg-muted/50 border-border hover:border-customer/40'
-                    }`}
-                  >
-                    <MapPin className="w-4 h-4 flex-shrink-0 text-customer" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-bold text-muted-foreground">{a.label}</p>
-                      <p className="text-sm font-medium truncate">{a.address}</p>
-                    </div>
-                    {isActive && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-customer bg-white px-2 py-1 rounded-full border border-customer/30">
-                        Active
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-6 max-w-md mx-auto">
-              <button
-                type="button"
-                onClick={() => setAddressPickerOpen(true)}
-                className="btn-primary w-full py-3 justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Add Address on Map
-              </button>
-            </div>
-          </div>
-
+          <CustomerProfile
+            deliveryAddress={deliveryAddress}
+            savedAddresses={savedAddresses}
+            onSelectSavedAddress={onSelectSavedAddress}
+            onOpenAddressPicker={() => setAddressPickerOpen(true)}
+            onProfileUpdate={onProfileUpdate}
+          />
           <AddressPickerModal
             isOpen={addressPickerOpen}
             onClose={() => setAddressPickerOpen(false)}
@@ -264,14 +224,6 @@ function CustomerTabContent({
           />
         </>
       );
-    case 'favorites':
-      return (
-        <div className="bg-card rounded-2xl border border-border p-6 sm:p-8 text-center">
-          <Heart className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-          <h3 className="text-lg font-bold mb-1">Favorite Restaurants</h3>
-          <p className="text-muted-foreground text-sm">Your saved restaurants will appear here.</p>
-        </div>
-      );
     default:
       return null;
   }
@@ -281,12 +233,82 @@ export default function CustomerDashboardPage() {
   const [activeTab, setActiveTab] = useState<CustomerTab>('discover');
   const [collapsed, setCollapsed] = useState(false);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
-  const [cartItems, setCartItems] = useState<CartItem[]>(INITIAL_CART);
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartHydrated, setCartHydrated] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddressInfo>(DEFAULT_DELIVERY);
   const [savedAddresses, setSavedAddresses] = useState<DeliveryAddressInfo[]>(DEFAULT_SAVED_ADDRESSES);
   const [showOrderConfirmation, setShowOrderConfirmation] = useState(false);
   const [orderTotals, setOrderTotals] = useState<OrderTotals | null>(null);
   const [confirmationItems, setConfirmationItems] = useState<CartItem[]>([]);
+  const [customerUser, setCustomerUser] = useState<CustomerUser>({
+    firstName: 'Customer',
+    lastName: '',
+    profileImage: '',
+  });
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+
+  // Hydrate cart from localStorage once on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CART_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as CartItem[];
+        if (Array.isArray(parsed)) setCartItems(parsed);
+      }
+    } catch {
+      // ignore corrupt storage
+    } finally {
+      setCartHydrated(true);
+    }
+  }, []);
+
+  // Load customer profile for topbar + saved addresses
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCustomerUser() {
+      try {
+        const res = await fetch(`/api/customer/profile?customerId=${CUSTOMER_ID}`);
+        const data = await res.json();
+        if (!res.ok || !data.success || !data.profile || cancelled) return;
+
+        const { firstName, lastName } = splitFullName(data.profile.name || 'Customer');
+        setCustomerUser({
+          firstName,
+          lastName,
+          profileImage: data.profile.profileImage || '',
+        });
+
+        const dbAddresses = Array.isArray(data.profile.savedAddresses)
+          ? (data.profile.savedAddresses as DeliveryAddressInfo[]).filter(
+              (a) => a && typeof a.address === 'string' && a.address.trim().length > 0
+            )
+          : [];
+
+        if (dbAddresses.length > 0) {
+          setSavedAddresses(dbAddresses);
+          setDeliveryAddress(dbAddresses[0]);
+        }
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    loadCustomerUser();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist cart whenever it changes (after hydration)
+  useEffect(() => {
+    if (!cartHydrated) return;
+    try {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
+    } catch {
+      // storage full / private mode
+    }
+  }, [cartItems, cartHydrated]);
 
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
 
@@ -334,21 +356,55 @@ export default function CustomerDashboardPage() {
     setShowOrderConfirmation(false);
   };
 
-  const handleOrderSuccess = (_orderNumber: string) => {
+  const handleOrderSuccess = (orderId: string) => {
     clearCart();
+    try {
+      localStorage.removeItem(CART_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
     setShowOrderConfirmation(false);
     setOrderTotals(null);
     setConfirmationItems([]);
     setSelectedRestaurant(null);
+    if (orderId) {
+      setActiveOrderId(orderId);
+    }
     setActiveTab('discover');
   };
 
-  const handleAddSavedAddress = (address: DeliveryAddressInfo) => {
-    setSavedAddresses((prev) => {
-      const exists = prev.some((a) => a.lat === address.lat && a.lng === address.lng);
-      if (exists) return prev;
-      return [...prev, address];
-    });
+  const handleAddSavedAddress = async (address: DeliveryAddressInfo) => {
+    const updatedAddresses = (() => {
+      const exists = savedAddresses.some(
+        (a) => a.lat === address.lat && a.lng === address.lng
+      );
+      if (exists) {
+        return savedAddresses.map((a) =>
+          a.lat === address.lat && a.lng === address.lng ? address : a
+        );
+      }
+      return [...savedAddresses, address];
+    })();
+
+    setSavedAddresses(updatedAddresses);
+
+    try {
+      const res = await fetch('/api/customer/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: CUSTOMER_ID,
+          savedAddresses: updatedAddresses,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to save address');
+      }
+    } catch (error) {
+      console.warn(error);
+      toast.error('Address saved locally, but failed to sync to cloud');
+    }
   };
 
   const navItems: {
@@ -360,6 +416,7 @@ export default function CustomerDashboardPage() {
   }[] = [
     { key: 'nav-home', tab: 'discover', icon: Home, label: 'Discover', badge: null },
     { key: 'nav-orders', tab: 'orders', icon: ClipboardList, label: 'My Orders', badge: '1' },
+    { key: 'nav-parcels', tab: 'parcels', icon: Package, label: 'Parcels', badge: '2' },
     {
       key: 'nav-cart',
       tab: 'cart',
@@ -367,7 +424,6 @@ export default function CustomerDashboardPage() {
       label: 'Cart',
       badge: cartCount > 0 ? String(cartCount) : null,
     },
-    { key: 'nav-addresses', tab: 'addresses', icon: MapPin, label: 'Addresses', badge: null },
     { key: 'nav-favorites', tab: 'favorites', icon: Heart, label: 'Favorites', badge: null },
   ];
 
@@ -437,14 +493,16 @@ export default function CustomerDashboardPage() {
 
         <div className="p-3 border-t border-border space-y-1">
           <button
-            onClick={() => handleTabChange('discover')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium nav-item ${
-              collapsed ? 'justify-center px-0' : ''
-            }`}
-            title={collapsed ? 'Settings' : undefined}
+            onClick={() => handleTabChange('profile')}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
+              activeTab === 'profile' && !showOrderConfirmation
+                ? 'nav-item-active bg-orange-50 text-customer'
+                : 'nav-item'
+            } ${collapsed ? 'justify-center px-0' : ''}`}
+            title={collapsed ? 'Profile' : undefined}
           >
-            <Settings className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>Settings</span>}
+            <User className="w-4 h-4 flex-shrink-0" />
+            {!collapsed && <span>Profile</span>}
           </button>
           <a
             href="/"
@@ -460,7 +518,10 @@ export default function CustomerDashboardPage() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <CustomerTopbar />
+        <CustomerTopbar
+          onProfileClick={() => handleTabChange('profile')}
+          user={customerUser}
+        />
         <main
           className={`flex-1 overflow-y-auto min-w-0 pb-20 md:pb-6 ${
             activeTab === 'discover' && selectedRestaurant && !showOrderConfirmation
@@ -497,18 +558,21 @@ export default function CustomerDashboardPage() {
             onConfirmOrder={handleConfirmOrder}
             onBackFromConfirmation={handleBackFromConfirmation}
             onOrderSuccess={handleOrderSuccess}
+            onProfileUpdate={setCustomerUser}
+            activeOrderId={activeOrderId}
+            onClearActiveOrder={() => setActiveOrderId(null)}
           />
         </main>
       </div>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border flex items-center justify-around px-2 py-1 safe-area-pb">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border flex items-center justify-around px-0.5 py-1 safe-area-pb">
         {navItems.map((item) => {
           const isActive = activeTab === item.tab && !showOrderConfirmation;
           return (
             <button
               key={`mobile-${item.key}`}
               onClick={() => handleTabChange(item.tab)}
-              className={`relative flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl transition-all duration-150 min-w-0 flex-1 ${
+              className={`relative flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-xl transition-all duration-150 min-w-0 flex-1 ${
                 isActive ? 'text-customer' : 'text-muted-foreground'
               }`}
             >

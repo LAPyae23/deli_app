@@ -93,32 +93,82 @@ export default function AuthPageClient() {
   };
 
   const onLoginSubmit = async (data: LoginForm) => {
-    setIsLoading(true);
-    // BACKEND INTEGRATION: POST /api/auth/login with { email, password, role: activeRole }
-    await new Promise(r => setTimeout(r, 1200));
-    const matchingCred = DEMO_CREDENTIALS.find(c => c.email === data.email && c.password === data.password && c.role === activeRole);
-    if (!matchingCred) {
-      loginForm.setError('email', { message: 'Invalid credentials — use the demo accounts below to sign in' });
+  setIsLoading(true);
+
+  try {
+    // API သို့ Login Data များ ပို့လွှတ်ခြင်း
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: data.email,
+        password: data.password,
+        role: activeRole, // ဥပမာ - 'RESTAURANT', 'CUSTOMER' စသည်
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      // API ကနေ Error ပြန်လာရင် Form မှာ Error ပြပါမယ်
+      loginForm.setError('email', { message: result.message || 'Invalid credentials' });
       setIsLoading(false);
       return;
     }
-    toast.success(`Welcome back, ${matchingCred.name}!`);
-    setIsLoading(false);
-    router.push(ROLE_CONFIG[activeRole].route);
-  };
 
-  const onSignupSubmit = async (data: SignupForm) => {
-    if (data.password !== data.confirmPassword) {
-      signupForm.setError('confirmPassword', { message: 'Passwords do not match' });
-      return;
+    // Login အောင်မြင်ပါက Toast ပြပြီး သက်ဆိုင်ရာ Dashboard ကို သွားပါမယ်
+    toast.success(result.message);
+    setIsLoading(false);
+    
+    // Role အလိုက် သတ်မှတ်ထားတဲ့ Route ကို Redirect လုပ်ပါမယ်
+    router.push(ROLE_CONFIG[activeRole].route);
+
+  } catch (error: any) {
+    toast.error('Something went wrong. Please try again.');
+    setIsLoading(false);
+  }
+};
+const onSignupSubmit = async (data: SignupForm) => {
+  if (data.password !== data.confirmPassword) {
+    signupForm.setError('confirmPassword', { message: 'Passwords do not match' });
+    return;
+  }
+  
+  setIsLoading(true);
+
+  try {
+    // API သို့ Data များ ပို့လွှတ်ခြင်း
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+        phone: data.phone,
+        password: data.password,
+        role: activeRole, // ဥပမာ - 'RESTAURANT'
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.message || 'Registration failed');
     }
-    setIsLoading(true);
-    // BACKEND INTEGRATION: POST /api/auth/register with { ...data, role: activeRole }
-    await new Promise(r => setTimeout(r, 1200));
+
     toast.success('Account created! Please sign in.');
     setActiveTab('login');
+  } catch (error: any) {
+    toast.error(error.message);
+  } finally {
     setIsLoading(false);
-  };
+  }
+};
 
   const cfg = ROLE_CONFIG[activeRole];
 
