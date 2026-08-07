@@ -10,6 +10,7 @@ export type PlaceOrderPayload = {
 
 export type PlaceOrderResponse = {
   success: boolean;
+  orderId: string;
   orderNumber: string;
   estimatedDeliveryMinutes: number;
   message: string;

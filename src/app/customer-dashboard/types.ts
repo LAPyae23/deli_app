@@ -46,6 +46,8 @@ export type Restaurant = {
 
 export type MenuItem = {
   id: string;
+  /** MongoDB document id when loaded from /api/menu */
+  _id?: string;
   name: string;
   description: string;
   price: number;
@@ -54,4 +56,25 @@ export type MenuItem = {
   imageAlt: string;
   category: string;
   popular?: boolean;
+  restaurantId?: string;
+  isAvailable?: boolean;
+  addons?: { name: string; extraPrice: number }[];
+};
+
+export type ParcelStatus = 'DRAFT' | 'SCHEDULED' | 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED';
+export type ParcelSize = 'Envelope' | 'Small' | 'Medium';
+
+export type CustomerParcel = {
+  id: string;
+  ref: string;
+  pickupLocation: string;
+  pickupAddress: string;
+  dropoffLocation: string;
+  dropoffAddress: string;
+  recipientName: string;
+  status: ParcelStatus;
+  timeWindow: string;
+  fee: number;
+  size: ParcelSize;
+  notes?: string;
 };

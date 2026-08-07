@@ -29,7 +29,7 @@ interface OrderConfirmationScreenProps {
   onDeliveryAddressChange: (address: DeliveryAddressInfo) => void;
   restaurantName?: string;
   onBack: () => void;
-  onOrderSuccess: (orderNumber: string) => void;
+  onOrderSuccess: (orderId: string) => void;
 }
 
 export default function OrderConfirmationScreen({
@@ -74,7 +74,7 @@ export default function OrderConfirmationScreen({
       });
 
       toast.success(`${result.orderNumber} placed — ETA ~${result.estimatedDeliveryMinutes} min`);
-      onOrderSuccess(result.orderNumber);
+      onOrderSuccess(result.orderId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to place order');
     } finally {
