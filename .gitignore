@@ -2,6 +2,11 @@
 node_modules/
 package-lock.json
 
+# Environment / secrets (keep off GitHub)
+.env
+.env.*
+!.env.example
+
 # Next.js build output
 .next/
 out/

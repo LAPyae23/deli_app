@@ -1,43 +1,38 @@
-import mongoose from 'mongoose';
+import { MongoClient, Db } from 'mongodb';
 
+const uri = process.env.MONGODB_URI;
 
-const MONGODB_URI = process.env.MONGODB_URI!;
-
-if (!MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
+if (!uri) {
+  throw new Error('Missing MONGODB_URI in .env');
 }
 
-
-let cached = (global as any).mongoose;
-
-if (!cached) {
-  cached = (global as any).mongoose = { conn: null, promise: null };
+interface MongoCache {
+  client: MongoClient | null;
+  promise: Promise<MongoClient> | null;
 }
 
-async function dbConnect() {
-  
-  if (cached.conn) {
-    return cached.conn;
-  }
-
-  if (!cached.promise) {
-    const opts = {
-      bufferCommands: false,
-    };
-
-    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
-      return mongoose;
-    });
-  }
-  
-  try {
-    cached.conn = await cached.promise;
-  } catch (e) {
-    cached.promise = null;
-    throw e;
-  }
-
-  return cached.conn;
+declare global {
+  // eslint-disable-next-line no-var
+  var _mongoCache: MongoCache | undefined;
 }
 
-export default dbConnect;
+const cache: MongoCache = global._mongoCache ?? { client: null, promise: null };
+global._mongoCache = cache;
+
+export async function getMongoClient(): Promise<MongoClient> {
+  if (cache.client) {
+    return cache.client;
+  }
+
+  if (!cache.promise) {
+    cache.promise = MongoClient.connect(uri as string);
+  }
+
+  cache.client = await cache.promise;
+  return cache.client;
+}
+
+export async function getDb(dbName = 'FoodDashDB'): Promise<Db> {
+  const client = await getMongoClient();
+  return client.db(dbName);
+}

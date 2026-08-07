@@ -4,6 +4,7 @@ import { Plus_Jakarta_Sans } from 'next/font/google';
 import { Toaster } from 'sonner';
 import 'leaflet/dist/leaflet.css';
 import '../styles/tailwind.css';
+import '../styles/admin-theme.css';
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ['latin'],
