@@ -14,11 +14,12 @@ import {
 import { toast } from 'sonner';
 import AddressPickerModal, { type PickedAddress } from './AddressPickerModal';
 import { placeOrder } from '../services/orderService';
+import { formatKyat } from '@/lib/currency';
 import type { CartItem, DeliveryAddressInfo, OrderTotals } from '../types';
 
 const PAYMENT_METHODS = [
   { id: 'card', label: 'Credit / Debit Card', sub: 'Visa •••• 4242', icon: CreditCard },
-  { id: 'wallet', label: 'FoodDash Wallet', sub: 'Balance: $24.50', icon: Wallet },
+  { id: 'wallet', label: 'FoodDash Wallet', sub: `Balance: ${formatKyat(24.5)}`, icon: Wallet },
   { id: 'cash', label: 'Cash on Delivery', sub: 'Pay when delivered', icon: Banknote },
 ];
 
@@ -27,6 +28,7 @@ interface OrderConfirmationScreenProps {
   totals: OrderTotals;
   deliveryAddress: DeliveryAddressInfo;
   onDeliveryAddressChange: (address: DeliveryAddressInfo) => void;
+  savedAddresses?: DeliveryAddressInfo[];
   restaurantName?: string;
   onBack: () => void;
   onOrderSuccess: (orderId: string) => void;
@@ -37,6 +39,7 @@ export default function OrderConfirmationScreen({
   totals,
   deliveryAddress,
   onDeliveryAddressChange,
+  savedAddresses = [],
   restaurantName,
   onBack,
   onOrderSuccess,
@@ -137,6 +140,30 @@ export default function OrderConfirmationScreen({
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground">{deliveryAddress.label}</p>
                 <p className="text-xs text-muted-foreground">{deliveryAddress.address}</p>
+                {savedAddresses.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {savedAddresses.map((a) => {
+                      const isActive =
+                        a.lat === deliveryAddress.lat &&
+                        a.lng === deliveryAddress.lng &&
+                        a.label === deliveryAddress.label;
+                      return (
+                        <button
+                          key={`${a.label}-${a.lat}-${a.lng}`}
+                          type="button"
+                          onClick={() => onDeliveryAddressChange(a)}
+                          className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition-colors ${
+                            isActive
+                              ? 'border-customer bg-orange-50 text-customer'
+                              : 'border-border bg-card text-muted-foreground hover:border-customer/40'
+                          }`}
+                        >
+                          {a.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setAddressPickerOpen(true)}
@@ -164,12 +191,12 @@ export default function OrderConfirmationScreen({
                       <p className="text-sm font-semibold text-foreground leading-tight">{item.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{item.options}</p>
                       <p className="text-xs text-muted-foreground font-tabular mt-0.5">
-                        ${item.unitPrice.toFixed(2)} each
+                        {formatKyat(item.unitPrice)} each
                       </p>
                     </div>
                   </div>
                   <p className="text-sm font-bold font-tabular text-foreground flex-shrink-0">
-                    ${(item.unitPrice * item.quantity).toFixed(2)}
+                    {formatKyat(item.unitPrice * item.quantity)}
                   </p>
                 </div>
               ))}
@@ -192,15 +219,15 @@ export default function OrderConfirmationScreen({
                   }`}
                 >
                   {row.value < 0
-                    ? `-$${Math.abs(row.value).toFixed(2)}`
-                    : `$${row.value.toFixed(2)}`}
+                    ? `-${formatKyat(Math.abs(row.value))}`
+                    : formatKyat(row.value)}
                 </span>
               </div>
             ))}
             <div className="flex justify-between items-center pt-3 border-t border-border">
               <span className="text-base font-bold text-foreground">Grand Total</span>
               <span className="text-xl font-bold font-tabular text-customer">
-                ${totals.total.toFixed(2)}
+                {formatKyat(totals.total)}
               </span>
             </div>
           </div>
@@ -275,7 +302,7 @@ export default function OrderConfirmationScreen({
                 <>
                   <span>Place Order</span>
                   <span className="flex items-center gap-1 font-tabular">
-                    ${totals.total.toFixed(2)} <ChevronRight className="w-4 h-4" />
+                    {formatKyat(totals.total)} <ChevronRight className="w-4 h-4" />
                   </span>
                 </>
               )}

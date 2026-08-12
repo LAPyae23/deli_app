@@ -52,6 +52,7 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [addons, setAddons] = useState<AddonRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !item) return;
@@ -77,20 +78,36 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
     );
   }, [isOpen, item]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (file.size > 2 * 1024 * 1024) {
       toast.error('Image size should be less than 2MB');
+      e.target.value = '';
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setFormData((prev) => ({ ...prev, image: reader.result as string }));
-    };
-    reader.readAsDataURL(file);
+    setIsUploading(true);
+    const toastId = toast.loading('Uploading image...');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.url) {
+        throw new Error(data.message || 'Upload failed');
+      }
+      setFormData((prev) => ({ ...prev, image: data.url as string }));
+      toast.success('Image uploaded', { id: toastId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to upload image', {
+        id: toastId,
+      });
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
+    }
   };
 
   const toggleDietaryTag = (tag: string) => {
@@ -201,11 +218,14 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
                   <input
                     type="file"
                     accept="image/*"
+                    disabled={isUploading}
                     onChange={handleImageChange}
-                    className="w-full cursor-pointer text-sm text-muted-foreground file:mr-4 file:rounded-lg file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-customer hover:file:bg-orange-100"
+                    className="w-full cursor-pointer text-sm text-muted-foreground file:mr-4 file:rounded-lg file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-customer hover:file:bg-orange-100 disabled:opacity-60"
                   />
                   <p className="mt-2 text-[10px] text-muted-foreground">
-                    Recommended: Square image, max 2MB.
+                    {isUploading
+                      ? 'Uploading image…'
+                      : 'Recommended: Square image, max 2MB.'}
                   </p>
                 </div>
               </div>
@@ -368,7 +388,7 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
                         value={addon.extraPrice}
                         onChange={(e) => updateAddon(addon.id, 'extraPrice', e.target.value)}
                         className="input-field w-24 py-2 text-sm"
-                        placeholder="$0.00"
+                        placeholder="0 Ks"
                       />
                       <button
                         type="button"
@@ -390,8 +410,13 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
           <button type="button" onClick={onClose} className="btn-secondary flex-1 py-2.5">
             Cancel
           </button>
-          <button type="submit" form="edit-menu-form" disabled={isLoading} className="btn-primary flex-1 py-2.5">
-            {isLoading ? 'Saving...' : 'Save Changes'}
+          <button
+            type="submit"
+            form="edit-menu-form"
+            disabled={isLoading || isUploading}
+            className="btn-primary flex-1 py-2.5"
+          >
+            {isUploading ? 'Uploading...' : isLoading ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </div>

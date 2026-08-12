@@ -17,10 +17,13 @@ export type PlaceOrderResponse = {
 };
 
 export async function placeOrder(payload: PlaceOrderPayload): Promise<PlaceOrderResponse> {
+  const customerId = localStorage.getItem('fooddash_session_id') || '';
+  const body = { ...payload, customerId };
+
   const res = await fetch('/api/orders', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

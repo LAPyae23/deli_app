@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -16,13 +16,47 @@ export default function StoreStatusSwitcher({ collapsed }: { collapsed: boolean 
   const [status, setStatus] = useState<StoreStatus>('OPEN');
   const [open, setOpen] = useState(false);
 
-  const current = STATUS_OPTIONS.find(s => s.value === status)!;
+  useEffect(() => {
+    const sessionId = localStorage.getItem('fooddash_session_id');
+    if (!sessionId) return;
+    fetch(`/api/restaurant/profile?restaurantId=${sessionId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.profile?.storeStatus) {
+          setStatus(data.profile.storeStatus);
+        }
+      })
+      .catch(() => {
+        // keep default OPEN
+      });
+  }, []);
 
-  const handleChange = (s: StoreStatus) => {
-    // BACKEND INTEGRATION: Socket.io emit 'restaurant:update_status'
+  const current = STATUS_OPTIONS.find((s) => s.value === status)!;
+
+  const handleChange = async (s: StoreStatus) => {
+    const sessionId = localStorage.getItem('fooddash_session_id');
+    if (!sessionId) {
+      toast.error('Please sign in again');
+      return;
+    }
+    const previous = status;
     setStatus(s);
     setOpen(false);
-    toast.success(`Store status updated to ${s}`);
+    try {
+      const res = await fetch('/api/restaurant/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId: sessionId, storeStatus: s }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to update status');
+      }
+      toast.success(`Store status updated to ${s}`);
+    } catch (error) {
+      setStatus(previous);
+      toast.error(error instanceof Error ? error.message : 'Failed to update status');
+    }
   };
 
   if (collapsed) {
@@ -36,11 +70,18 @@ export default function StoreStatusSwitcher({ collapsed }: { collapsed: boolean 
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen(p => !p)}
+        type="button"
+        onClick={() => setOpen((p) => !p)}
         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-border transition-colors text-sm"
       >
-        <div className={`w-2.5 h-2.5 rounded-full ${current.dot} ${status === 'OPEN' ? 'status-pulse' : ''}`} />
-        <span className={`font-semibold flex-1 text-left ${current.color}`}>Store {current.label}</span>
+        <div
+          className={`w-2.5 h-2.5 rounded-full ${current.dot} ${
+            status === 'OPEN' ? 'status-pulse' : ''
+          }`}
+        />
+        <span className={`font-semibold flex-1 text-left ${current.color}`}>
+          Store {current.label}
+        </span>
         <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
       </button>
       {open && (
@@ -48,12 +89,17 @@ export default function StoreStatusSwitcher({ collapsed }: { collapsed: boolean 
           {STATUS_OPTIONS.map((opt) => (
             <button
               key={`status-opt-${opt.value}`}
+              type="button"
               onClick={() => handleChange(opt.value)}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted transition-colors ${status === opt.value ? 'bg-muted' : ''}`}
+              className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted transition-colors ${
+                status === opt.value ? 'bg-muted' : ''
+              }`}
             >
               <div className={`w-2.5 h-2.5 rounded-full ${opt.dot}`} />
               <span className={`font-semibold ${opt.color}`}>{opt.label}</span>
-              {status === opt.value && <span className="ml-auto text-xs text-muted-foreground">Current</span>}
+              {status === opt.value && (
+                <span className="ml-auto text-xs text-muted-foreground">Current</span>
+              )}
             </button>
           ))}
         </div>

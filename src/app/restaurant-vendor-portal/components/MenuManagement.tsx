@@ -5,6 +5,7 @@ import {
   Search, Plus, Edit2, Trash2, ToggleLeft, ToggleRight, TriangleAlert, Clock, Star, Minus,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatKyat } from '@/lib/currency';
 import AddMenuModal from './AddMenuModal';
 import EditMenuModal, { type EditableMenuItem } from './EditMenuModal';
 
@@ -39,6 +40,11 @@ const DIETARY_COLORS: Record<string, string> = {
   SPICY: 'bg-red-100 text-red-700',
 };
 
+function formatPrice(value: unknown): string {
+  const n = Number(value);
+  return formatKyat(Number.isFinite(n) ? n : 0);
+}
+
 export default function MenuManagement() {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -51,7 +57,10 @@ export default function MenuManagement() {
   const fetchMenu = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/menu');
+      const restaurantId = localStorage.getItem('fooddash_session_id') || '';
+      const res = await fetch(
+        `/api/menu?restaurantId=${encodeURIComponent(restaurantId)}`
+      );
       const data = await res.json();
       if (data.success) setItems(data.items);
     } catch {
@@ -247,7 +256,7 @@ export default function MenuManagement() {
                           )}
                           {typeof item.discountPrice === 'number' && item.discountPrice > 0 && (
                             <span className="font-semibold text-customer font-tabular">
-                              Sale ${item.discountPrice.toFixed(2)}
+                              Sale {formatKyat(item.discountPrice)}
                             </span>
                           )}
                           {item.addons && item.addons.length > 0 && (
@@ -266,13 +275,13 @@ export default function MenuManagement() {
                     <div className="flex flex-col">
                       {typeof item.discountPrice === 'number' && item.discountPrice > 0 ? (
                         <>
-                          <span className="text-customer">${item.discountPrice.toFixed(2)}</span>
+                          <span className="text-customer">{formatPrice(item.discountPrice)}</span>
                           <span className="text-xs font-medium text-muted-foreground line-through">
-                            ${item.price.toFixed(2)}
+                            {formatPrice(item.price)}
                           </span>
                         </>
                       ) : (
-                        <span>${item.price.toFixed(2)}</span>
+                        <span>{formatPrice(item.price)}</span>
                       )}
                     </div>
                   </td>
@@ -364,6 +373,11 @@ export default function MenuManagement() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSuccess={fetchMenu}
+        restaurantId={
+          typeof window !== 'undefined'
+            ? localStorage.getItem('fooddash_session_id') || ''
+            : ''
+        }
       />
       <EditMenuModal
         isOpen={!!editingItem}

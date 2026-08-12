@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Home, ShoppingCart, ClipboardList, Heart, LogOut, ChevronLeft, ChevronRight, Package, User } from 'lucide-react';
+import { Home, ShoppingCart, ClipboardList, LogOut, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
 import CustomerTopbar from '@/components/CustomerTopbar';
+import ThemeToggle from '@/components/ThemeToggle';
 import LiveOrderTracker from './components/LiveOrderTracker';
 import RestaurantGrid from './components/RestaurantGrid';
 import RestaurantMenu from './components/RestaurantMenu';
@@ -12,14 +13,14 @@ import OrderHistory from './components/OrderHistory';
 import CartPanel from './components/CartPanel';
 import OrderConfirmationScreen from './components/OrderConfirmationScreen';
 import AddressPickerModal, { type PickedAddress } from './components/AddressPickerModal';
-import ParcelDeliveryPanel from './components/ParcelDeliveryPanel';
 import CustomerProfile from './components/CustomerProfile';
+import AIRecommendations, { type AiLane } from './components/AIRecommendations';
+import { useRouter } from 'next/navigation';
 import type { CartItem, DeliveryAddressInfo, OrderTotals, Restaurant } from './types';
 
-type CustomerTab = 'discover' | 'orders' | 'cart' | 'favorites' | 'parcels' | 'profile';
+type CustomerTab = 'discover' | 'orders' | 'cart' | 'profile';
 
 const CART_STORAGE_KEY = 'fooddash-customer-cart';
-const CUSTOMER_ID = 'customer-demo-id';
 
 type CustomerUser = {
   firstName: string;
@@ -67,6 +68,7 @@ interface TabContentProps {
   onDeliveryAddressChange: (address: DeliveryAddressInfo) => void;
   savedAddresses: DeliveryAddressInfo[];
   onAddSavedAddress: (address: DeliveryAddressInfo) => void;
+  onRemoveSavedAddress: (address: DeliveryAddressInfo) => void;
   onSelectSavedAddress: (address: DeliveryAddressInfo) => void;
   removePurchasedItems: (ids: string[]) => void;
   showOrderConfirmation: boolean;
@@ -78,6 +80,9 @@ interface TabContentProps {
   onProfileUpdate: (userData: CustomerUser) => void;
   activeOrderId: string | null;
   onClearActiveOrder: () => void;
+  onRateRestaurant: (restaurantName: string) => void;
+  searchQuery: string;
+  onOpenAiPicks: (lane: AiLane) => void;
 }
 
 function CustomerTabContent({
@@ -95,6 +100,7 @@ function CustomerTabContent({
   onDeliveryAddressChange,
   savedAddresses,
   onAddSavedAddress,
+  onRemoveSavedAddress,
   onSelectSavedAddress,
   removePurchasedItems,
   showOrderConfirmation,
@@ -106,6 +112,9 @@ function CustomerTabContent({
   onProfileUpdate,
   activeOrderId,
   onClearActiveOrder,
+  onRateRestaurant,
+  searchQuery,
+  onOpenAiPicks,
 }: TabContentProps) {
   const [addressPickerOpen, setAddressPickerOpen] = useState(false);
 
@@ -118,6 +127,7 @@ function CustomerTabContent({
       updateQty={updateQty}
       removeItem={removeItem}
       removePurchasedItems={removePurchasedItems}
+      addToCart={addToCart}
       restaurantName={restaurantName}
       deliveryAddress={deliveryAddress}
       savedAddresses={savedAddresses}
@@ -137,6 +147,7 @@ function CustomerTabContent({
         totals={orderTotals}
         deliveryAddress={deliveryAddress}
         onDeliveryAddressChange={onDeliveryAddressChange}
+        savedAddresses={savedAddresses}
         restaurantName={restaurantName}
         onBack={onBackFromConfirmation}
         onOrderSuccess={onOrderSuccess}
@@ -154,7 +165,6 @@ function CustomerTabContent({
     };
     onAddSavedAddress(next);
     onDeliveryAddressChange(next);
-    toast.success('Address saved');
   };
 
   switch (activeTab) {
@@ -181,25 +191,23 @@ function CustomerTabContent({
               onDismiss={onClearActiveOrder}
             />
           )}
-          <RestaurantGrid onSelectRestaurant={onSelectRestaurant} />
+          <AIRecommendations
+            compactEntry
+            onOpenLane={onOpenAiPicks}
+          />
+          <RestaurantGrid
+            onSelectRestaurant={onSelectRestaurant}
+            deliveryAddress={deliveryAddress}
+            searchQuery={searchQuery}
+          />
         </>
       );
     case 'orders':
-      return <OrderHistory />;
-    case 'parcels':
-      return <ParcelDeliveryPanel />;
+      return <OrderHistory onRateRestaurant={onRateRestaurant} />;
     case 'cart':
       return (
         <div className="flex flex-col items-stretch max-w-lg mx-auto w-full min-w-0">
           {cartPanel}
-        </div>
-      );
-    case 'favorites':
-      return (
-        <div className="bg-card rounded-2xl border border-border p-6 sm:p-8 text-center">
-          <Heart className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-          <h3 className="text-lg font-bold mb-1">Favorite Restaurants</h3>
-          <p className="text-muted-foreground text-sm">Your saved restaurants will appear here.</p>
         </div>
       );
     case 'profile':
@@ -209,6 +217,7 @@ function CustomerTabContent({
             deliveryAddress={deliveryAddress}
             savedAddresses={savedAddresses}
             onSelectSavedAddress={onSelectSavedAddress}
+            onRemoveSavedAddress={onRemoveSavedAddress}
             onOpenAddressPicker={() => setAddressPickerOpen(true)}
             onProfileUpdate={onProfileUpdate}
           />
@@ -230,6 +239,7 @@ function CustomerTabContent({
 }
 
 export default function CustomerDashboardPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<CustomerTab>('discover');
   const [collapsed, setCollapsed] = useState(false);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
@@ -246,6 +256,14 @@ export default function CustomerDashboardPage() {
     profileImage: '',
   });
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const role = localStorage.getItem('fooddash_session_role');
+    if (role !== 'CUSTOMER') {
+      window.location.href = '/';
+    }
+  }, []);
 
   // Hydrate cart from localStorage once on mount
   useEffect(() => {
@@ -268,7 +286,12 @@ export default function CustomerDashboardPage() {
 
     async function loadCustomerUser() {
       try {
-        const res = await fetch(`/api/customer/profile?customerId=${CUSTOMER_ID}`);
+        const sessionId = localStorage.getItem('fooddash_session_id');
+        if (!sessionId) return;
+
+        const res = await fetch(
+          `/api/customer/profile?customerId=${encodeURIComponent(sessionId)}`
+        );
         const data = await res.json();
         if (!res.ok || !data.success || !data.profile || cancelled) return;
 
@@ -375,25 +398,39 @@ export default function CustomerDashboardPage() {
 
   const handleAddSavedAddress = async (address: DeliveryAddressInfo) => {
     const updatedAddresses = (() => {
-      const exists = savedAddresses.some(
+      const sameCoords = savedAddresses.findIndex(
         (a) => a.lat === address.lat && a.lng === address.lng
       );
-      if (exists) {
-        return savedAddresses.map((a) =>
-          a.lat === address.lat && a.lng === address.lng ? address : a
-        );
+      if (sameCoords >= 0) {
+        return savedAddresses.map((a, i) => (i === sameCoords ? address : a));
       }
+
+      // Replace existing entry with the same custom label (e.g. Home / Work)
+      const sameLabel = savedAddresses.findIndex(
+        (a) => a.label.trim().toLowerCase() === address.label.trim().toLowerCase()
+      );
+      if (sameLabel >= 0) {
+        return savedAddresses.map((a, i) => (i === sameLabel ? address : a));
+      }
+
       return [...savedAddresses, address];
     })();
 
     setSavedAddresses(updatedAddresses);
+    setDeliveryAddress(address);
 
     try {
+      const sessionId = localStorage.getItem('fooddash_session_id');
+      if (!sessionId) {
+        toast.error('Address saved locally — please sign in again to sync');
+        return;
+      }
+
       const res = await fetch('/api/customer/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerId: CUSTOMER_ID,
+          customerId: sessionId,
           savedAddresses: updatedAddresses,
         }),
       });
@@ -401,9 +438,52 @@ export default function CustomerDashboardPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.message || 'Failed to save address');
       }
+      toast.success(`Saved “${address.label}”`);
     } catch (error) {
       console.warn(error);
       toast.error('Address saved locally, but failed to sync to cloud');
+    }
+  };
+
+  const handleRemoveSavedAddress = async (address: DeliveryAddressInfo) => {
+    const updatedAddresses = savedAddresses.filter(
+      (a) =>
+        !(
+          a.label === address.label &&
+          a.lat === address.lat &&
+          a.lng === address.lng
+        )
+    );
+    setSavedAddresses(updatedAddresses);
+
+    if (
+      deliveryAddress.label === address.label &&
+      deliveryAddress.lat === address.lat &&
+      deliveryAddress.lng === address.lng
+    ) {
+      setDeliveryAddress(updatedAddresses[0] || DEFAULT_DELIVERY);
+    }
+
+    try {
+      const sessionId = localStorage.getItem('fooddash_session_id');
+      if (!sessionId) return;
+
+      const res = await fetch('/api/customer/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: sessionId,
+          savedAddresses: updatedAddresses,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to remove address');
+      }
+      toast.success(`Removed “${address.label}”`);
+    } catch (error) {
+      console.warn(error);
+      toast.error('Failed to sync address removal');
     }
   };
 
@@ -415,8 +495,7 @@ export default function CustomerDashboardPage() {
     badge: string | null;
   }[] = [
     { key: 'nav-home', tab: 'discover', icon: Home, label: 'Discover', badge: null },
-    { key: 'nav-orders', tab: 'orders', icon: ClipboardList, label: 'My Orders', badge: '1' },
-    { key: 'nav-parcels', tab: 'parcels', icon: Package, label: 'Parcels', badge: '2' },
+    { key: 'nav-orders', tab: 'orders', icon: ClipboardList, label: 'My Orders', badge: null },
     {
       key: 'nav-cart',
       tab: 'cart',
@@ -424,7 +503,7 @@ export default function CustomerDashboardPage() {
       label: 'Cart',
       badge: cartCount > 0 ? String(cartCount) : null,
     },
-    { key: 'nav-favorites', tab: 'favorites', icon: Heart, label: 'Favorites', badge: null },
+    { key: 'nav-profile', tab: 'profile', icon: User, label: 'Profile', badge: null },
   ];
 
   const handleTabChange = (tab: CustomerTab) => {
@@ -432,6 +511,48 @@ export default function CustomerDashboardPage() {
     setShowOrderConfirmation(false);
     if (tab !== 'discover' && tab !== 'cart') {
       setSelectedRestaurant(null);
+    }
+  };
+
+  const handleRateRestaurant = async (restaurantName: string) => {
+    try {
+      const res = await fetch('/api/restaurants');
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load restaurants');
+
+      const profiles = Array.isArray(data.restaurants) ? data.restaurants : [];
+      const match = profiles.find(
+        (p: { restaurantName?: string }) => p.restaurantName === restaurantName
+      );
+
+      if (!match) {
+        toast.error(`Could not find ${restaurantName}. Open it from Discover to leave a review.`);
+        setActiveTab('discover');
+        setSelectedRestaurant(null);
+        return;
+      }
+
+      const restaurant: Restaurant = {
+        id: match.restaurantId || restaurantName,
+        name: match.restaurantName || restaurantName,
+        cuisine: match.description?.trim() || match.address || 'Local restaurant',
+        rating: 4.8,
+        reviews: 0,
+        deliveryTime: '20-35 min',
+        deliveryFee: 1.99,
+        minOrder: 0,
+        image: match.coverImage || match.logoImage || '/assets/images/no_image.png',
+        imageAlt: `${match.restaurantName || restaurantName} cover photo`,
+        tags: [],
+        isOpen: true,
+        discount: null,
+      };
+
+      setShowOrderConfirmation(false);
+      setActiveTab('discover');
+      setSelectedRestaurant(restaurant);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to open restaurant');
     }
   };
 
@@ -492,18 +613,7 @@ export default function CustomerDashboardPage() {
         </nav>
 
         <div className="p-3 border-t border-border space-y-1">
-          <button
-            onClick={() => handleTabChange('profile')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
-              activeTab === 'profile' && !showOrderConfirmation
-                ? 'nav-item-active bg-orange-50 text-customer'
-                : 'nav-item'
-            } ${collapsed ? 'justify-center px-0' : ''}`}
-            title={collapsed ? 'Profile' : undefined}
-          >
-            <User className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>Profile</span>}
-          </button>
+          <ThemeToggle collapsed={collapsed} showLabel />
           <a
             href="/"
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium nav-item ${
@@ -520,6 +630,7 @@ export default function CustomerDashboardPage() {
       <div className="flex-1 flex flex-col min-w-0">
         <CustomerTopbar
           onProfileClick={() => handleTabChange('profile')}
+          onSearch={setSearchQuery}
           user={customerUser}
         />
         <main
@@ -550,6 +661,7 @@ export default function CustomerDashboardPage() {
             onDeliveryAddressChange={setDeliveryAddress}
             savedAddresses={savedAddresses}
             onAddSavedAddress={handleAddSavedAddress}
+            onRemoveSavedAddress={handleRemoveSavedAddress}
             onSelectSavedAddress={setDeliveryAddress}
             removePurchasedItems={removePurchasedItems}
             showOrderConfirmation={showOrderConfirmation}
@@ -558,9 +670,19 @@ export default function CustomerDashboardPage() {
             onConfirmOrder={handleConfirmOrder}
             onBackFromConfirmation={handleBackFromConfirmation}
             onOrderSuccess={handleOrderSuccess}
-            onProfileUpdate={setCustomerUser}
+      onProfileUpdate={(userData) => {
+              setCustomerUser(userData);
+              window.dispatchEvent(
+                new CustomEvent('fooddash:customer-profile-updated', { detail: userData })
+              );
+            }}
             activeOrderId={activeOrderId}
             onClearActiveOrder={() => setActiveOrderId(null)}
+            onRateRestaurant={handleRateRestaurant}
+            searchQuery={searchQuery}
+            onOpenAiPicks={(lane) =>
+              router.push(`/customer-dashboard/ai-picks?lane=${lane}`)
+            }
           />
         </main>
       </div>

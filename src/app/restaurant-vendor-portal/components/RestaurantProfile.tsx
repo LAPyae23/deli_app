@@ -3,9 +3,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  Store, Image as ImageIcon, Crosshair, Clock, Save, X,
+  Store, Image as ImageIcon, Crosshair, Clock, Save, X, Lock, MessageCircle,
 } from 'lucide-react';
+import Link from 'next/link';
 import { toast } from 'sonner';
+import ChatWidget from '@/components/ChatWidget';
+import {
+  SUPPORT_ADMIN_ID,
+  SUPPORT_ADMIN_NAME,
+  SUPPORT_ADMIN_ROLE,
+} from '@/lib/support';
 
 const ProfileMap = dynamic(() => import('./ProfileMap'), {
   ssr: false,
@@ -16,7 +23,6 @@ const ProfileMap = dynamic(() => import('./ProfileMap'), {
   ),
 });
 
-const RESTAURANT_ID = 'burger-bliss-id';
 const YANGON_CENTER = { lat: 16.8409, lng: 96.1735 };
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
@@ -33,7 +39,7 @@ type ProfileForm = {
 };
 
 const INITIAL_FORM: ProfileForm = {
-  restaurantName: 'Burger Bliss',
+  restaurantName: '',
   description: '',
   logoImage: '',
   coverImage: '',
@@ -48,21 +54,15 @@ function formatCoords(lat: number, lng: number) {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 export default function RestaurantProfile() {
   const [form, setForm] = useState<ProfileForm>(INITIAL_FORM);
+  const [restaurantId, setRestaurantId] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isGeocoding, setIsGeocoding] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [mapKey, setMapKey] = useState(0);
+  const [supportOpen, setSupportOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,14 +70,34 @@ export default function RestaurantProfile() {
     async function loadProfile() {
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/restaurant/profile?restaurantId=${RESTAURANT_ID}`);
+        const sessionId = localStorage.getItem('fooddash_session_id') || '';
+        const sessionName = localStorage.getItem('fooddash_session_name') || '';
+        const sessionEmail = localStorage.getItem('fooddash_session_email') || '';
+
+        if (!sessionId) {
+          if (!cancelled) {
+            setRestaurantId('');
+            setForm((prev) => ({
+              ...prev,
+              restaurantName: sessionName || sessionEmail || '',
+            }));
+            toast.error('Please sign in again to manage your restaurant profile');
+          }
+          return;
+        }
+
+        setRestaurantId(sessionId);
+
+        const res = await fetch(
+          `/api/restaurant/profile?restaurantId=${encodeURIComponent(sessionId)}`
+        );
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load');
 
         if (!cancelled && data.profile) {
           const p = data.profile;
           setForm({
-            restaurantName: p.restaurantName || INITIAL_FORM.restaurantName,
+            restaurantName: p.restaurantName || sessionName || '',
             description: p.description || '',
             logoImage: p.logoImage || '',
             coverImage: p.coverImage || '',
@@ -88,6 +108,11 @@ export default function RestaurantProfile() {
             lng: p.location?.lng ?? YANGON_CENTER.lng,
           });
           setMapKey((k) => k + 1);
+        } else if (!cancelled) {
+          setForm((prev) => ({
+            ...prev,
+            restaurantName: sessionName || sessionEmail || '',
+          }));
         }
       } catch (error) {
         console.error(error);
@@ -112,14 +137,29 @@ export default function RestaurantProfile() {
 
     if (file.size > MAX_IMAGE_BYTES) {
       toast.error('Image size should be less than 2MB');
+      e.target.value = '';
       return;
     }
 
+    setIsUploading(true);
+    const toastId = toast.loading('Uploading image...');
     try {
-      const base64 = await readFileAsBase64(file);
-      setForm((prev) => ({ ...prev, [field]: base64 }));
-    } catch {
-      toast.error('Failed to read image file');
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.url) {
+        throw new Error(data.message || 'Upload failed');
+      }
+      setForm((prev) => ({ ...prev, [field]: data.url as string }));
+      toast.success('Image uploaded', { id: toastId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to upload image', {
+        id: toastId,
+      });
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
     }
   };
 
@@ -159,13 +199,20 @@ export default function RestaurantProfile() {
       return;
     }
 
+    const sessionId =
+      restaurantId || localStorage.getItem('fooddash_session_id') || '';
+    if (!sessionId) {
+      toast.error('Missing session. Please sign in again.');
+      return;
+    }
+
     setIsSaving(true);
     try {
       const res = await fetch('/api/restaurant/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          restaurantId: RESTAURANT_ID,
+          restaurantId: sessionId,
           restaurantName: form.restaurantName.trim(),
           description: form.description.trim(),
           logoImage: form.logoImage,
@@ -180,6 +227,19 @@ export default function RestaurantProfile() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Save failed');
 
+      localStorage.setItem('fooddash_session_name', form.restaurantName.trim());
+      setRestaurantId(sessionId);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('fooddash:restaurant-profile-updated', {
+            detail: {
+              restaurantName: form.restaurantName.trim(),
+              address: form.address.trim(),
+              logoImage: form.logoImage || '',
+            },
+          })
+        );
+      }
       toast.success('Restaurant profile saved');
     } catch (error) {
       console.error(error);
@@ -199,7 +259,8 @@ export default function RestaurantProfile() {
   }
 
   return (
-    <form onSubmit={handleSave} className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
+    <form onSubmit={handleSave} className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">Restaurant Profile</h1>
@@ -225,12 +286,17 @@ export default function RestaurantProfile() {
               <p className="text-xs">No cover image</p>
             </div>
           )}
-          <label className="absolute bottom-3 right-3 cursor-pointer rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold shadow-sm backdrop-blur-sm transition-colors hover:bg-card">
-            Upload Cover
+          <label
+            className={`absolute bottom-3 right-3 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold shadow-sm backdrop-blur-sm transition-colors hover:bg-card ${
+              isUploading ? 'pointer-events-none opacity-60' : 'cursor-pointer'
+            }`}
+          >
+            {isUploading ? 'Uploading…' : 'Upload Cover'}
             <input
               type="file"
               accept="image/*"
               className="hidden"
+              disabled={isUploading}
               onChange={(e) => handleImageUpload(e, 'coverImage')}
             />
           </label>
@@ -258,12 +324,17 @@ export default function RestaurantProfile() {
             )}
           </div>
           <div className="flex flex-1 flex-wrap items-center gap-2 sm:pb-1">
-            <label className="cursor-pointer rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs font-semibold transition-colors hover:bg-muted">
-              Upload Logo
+            <label
+              className={`rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs font-semibold transition-colors hover:bg-muted ${
+                isUploading ? 'pointer-events-none opacity-60' : 'cursor-pointer'
+              }`}
+            >
+              {isUploading ? 'Uploading…' : 'Upload Logo'}
               <input
                 type="file"
                 accept="image/*"
                 className="hidden"
+                disabled={isUploading}
                 onChange={(e) => handleImageUpload(e, 'logoImage')}
               />
             </label>
@@ -293,7 +364,7 @@ export default function RestaurantProfile() {
             value={form.restaurantName}
             onChange={(e) => setForm({ ...form, restaurantName: e.target.value })}
             className="input-field"
-            placeholder="Burger Bliss"
+            placeholder="Your restaurant name"
           />
         </div>
 
@@ -387,5 +458,52 @@ export default function RestaurantProfile() {
         </button>
       </div>
     </form>
+
+    <div className="rounded-2xl border border-border bg-card p-5 card-shadow sm:p-6">
+      <div className="mb-1 flex items-center gap-2">
+        <MessageCircle className="h-4 w-4 text-restaurant" />
+        <h2 className="text-sm font-bold text-foreground">Support</h2>
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Contact FoodDash Support about payouts, approvals, or portal issues.
+      </p>
+      <button
+        type="button"
+        onClick={() => setSupportOpen(true)}
+        className="btn-primary w-full justify-center py-3"
+      >
+        <MessageCircle className="h-4 w-4" />
+        Contact Support
+      </button>
+    </div>
+
+    <div className="rounded-2xl border border-border bg-card p-5 card-shadow sm:p-6">
+      <div className="mb-1 flex items-center gap-2">
+        <Lock className="h-4 w-4 text-restaurant" />
+        <h2 className="text-sm font-bold text-foreground">Security</h2>
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Keep your restaurant account secure with a strong password.
+      </p>
+      <Link href="/change-password" className="btn-secondary w-full justify-center py-3">
+        <Lock className="h-4 w-4" />
+        Change Password
+      </Link>
+    </div>
+
+    {restaurantId && (
+      <ChatWidget
+        currentUserId={restaurantId}
+        currentUserRole="RESTAURANT"
+        targetUserId={SUPPORT_ADMIN_ID}
+        targetUserRole={SUPPORT_ADMIN_ROLE}
+        targetName={SUPPORT_ADMIN_NAME}
+        open={supportOpen}
+        onOpenChange={setSupportOpen}
+        showLauncher={false}
+        accentClassName="bg-restaurant"
+      />
+    )}
+    </div>
   );
 }

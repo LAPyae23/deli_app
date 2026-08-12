@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Star, Minus, Plus } from 'lucide-react';
 import AppImage from '@/components/ui/AppImage';
+import { formatMMK } from '@/lib/currency';
 import type { MenuItem } from '../types';
 
 interface MenuItemDetailProps {
@@ -40,10 +41,13 @@ export default function MenuItemDetail({ item, onClose, onAddToCart }: MenuItemD
   };
 
   const handleAdd = () => {
+    if (item.isAvailable === false) return;
     const selectedOptionsString = selectedAddons.length > 0 ? selectedAddons.join(', ') : '';
     onAddToCart(item, quantity, selectedOptionsString, unitPrice);
     onClose();
   };
+
+  const outOfStock = item.isAvailable === false;
 
   return (
     <div className="w-full overflow-hidden rounded-2xl border border-border bg-card animate-fade-in">
@@ -89,7 +93,7 @@ export default function MenuItemDetail({ item, onClose, onAddToCart }: MenuItemD
             {item.name}
           </h2>
           <p className="flex-shrink-0 text-lg font-bold text-customer font-tabular sm:text-xl">
-            ${item.price.toFixed(2)}
+            {formatMMK(item.price)}
           </p>
         </div>
 
@@ -141,7 +145,7 @@ export default function MenuItemDetail({ item, onClose, onAddToCart }: MenuItemD
                       <span className="truncate text-sm font-medium text-foreground">{addon.name}</span>
                     </span>
                     <span className="flex-shrink-0 text-sm font-semibold text-customer font-tabular">
-                      +${Number(addon.extraPrice || 0).toFixed(2)}
+                      +{formatMMK(Number(addon.extraPrice || 0))}
                     </span>
                   </label>
                 );
@@ -174,10 +178,15 @@ export default function MenuItemDetail({ item, onClose, onAddToCart }: MenuItemD
           <button
             type="button"
             onClick={handleAdd}
-            className="btn-primary w-full justify-between py-3.5"
+            disabled={outOfStock}
+            className={`w-full justify-between py-3.5 ${
+              outOfStock
+                ? 'inline-flex cursor-not-allowed items-center rounded-lg bg-muted px-4 text-sm font-semibold text-muted-foreground'
+                : 'btn-primary'
+            }`}
           >
-            <span>Add to Cart</span>
-            <span className="font-tabular">${total.toFixed(2)}</span>
+            <span>{outOfStock ? 'Out of Stock' : 'Add to Cart'}</span>
+            {!outOfStock && <span className="font-tabular">{formatMMK(total)}</span>}
           </button>
         </div>
       </div>

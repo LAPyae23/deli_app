@@ -1,46 +1,93 @@
-// app/api/auth/register/route.ts
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
-import bcrypt from 'bcryptjs'; // bcryptjs ကို import လုပ်ပါမယ်
+import bcrypt from 'bcryptjs';
 
 export async function POST(request: Request) {
   try {
-    await dbConnect();
     const body = await request.json();
+    const { firstName, lastName, email, phone, password, role } = body;
 
-    // ၁။ Email ထပ်နေတာမျိုးရှိမရှိ စစ်ဆေးပါမယ်
-    const existingUser = await User.findOne({ email: body.email });
-    if (existingUser) {
+    if (!firstName || !lastName || !email || !phone || !password || !role) {
       return NextResponse.json(
-        { success: false, message: 'This email is already registered.' },
+        { success: false, message: 'All fields are required' },
         { status: 400 }
       );
     }
 
-    // ၂။ Password ကို Hash (Encrypt) လုပ်မယ့် အပိုင်း
-    // Salt level ကို 10 ထားတာဟာ Security နဲ့ Performance မျှတတဲ့ Standard ဖြစ်ပါတယ်
-    const salt = await bcrypt.genSalt(10); 
-    const hashedPassword = await bcrypt.hash(body.password, salt);
+    if (role === 'ADMIN') {
+      return NextResponse.json(
+        { success: false, message: 'Admin accounts must be created from the admin terminal' },
+        { status: 403 }
+      );
+    }
 
-    // ၃။ Database ထဲကို Hash လုပ်ထားတဲ့ Password အသစ်နဲ့ သိမ်းပါမယ်
+    const allowedRoles = new Set(['CUSTOMER', 'RESTAURANT', 'RIDER']);
+    if (!allowedRoles.has(role)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid role' },
+        { status: 400 }
+      );
+    }
+
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!passwordRegex.test(password)) {
+      return NextResponse.json(
+        { success: false, message: 'Password does not meet complexity requirements' },
+        { status: 400 }
+      );
+    }
+
+    await dbConnect();
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return NextResponse.json(
+        { success: false, message: 'Email already exists' },
+        { status: 400 }
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    let displayId = undefined;
+    if (role === 'CUSTOMER') {
+      const lastCustomer = await User.findOne({
+        role: 'CUSTOMER',
+        displayId: { $exists: true },
+      }).sort({ createdAt: -1 });
+      let nextNum = 1;
+      if (lastCustomer && lastCustomer.displayId) {
+        const match = lastCustomer.displayId.match(/\d+$/);
+        if (match) nextNum = parseInt(match[0], 10) + 1;
+      }
+      displayId = `CUST-${nextNum.toString().padStart(4, '0')}`;
+    }
+
     const newUser = await User.create({
-      firstName: body.firstName,
-      lastName: body.lastName,
-      email: body.email,
-      phone: body.phone,
-      password: hashedPassword, // <--- User ရိုက်ထည့်လိုက်တဲ့ password အစစ်အစား hashed password ကို သုံးလိုက်ပါပြီ
-      role: body.role,
+      firstName,
+      lastName,
+      email,
+      phone,
+      password: hashedPassword,
+      role,
+      displayId,
     });
 
-    console.log("Restaurant registered securely with hashed password!");
-
-    return NextResponse.json(
-      { success: true, message: 'Account created successfully!' },
-      { status: 201 }
-    );
+    return NextResponse.json({
+      success: true,
+      userId: newUser._id,
+      user: {
+        firstName,
+        lastName,
+        email,
+        role,
+        name: `${firstName} ${lastName}`.trim(),
+      },
+    });
   } catch (error) {
-    console.error("Registration Error:", error);
+    console.error('Registration error:', error);
     return NextResponse.json(
       { success: false, message: 'Unable to register account' },
       { status: 500 }

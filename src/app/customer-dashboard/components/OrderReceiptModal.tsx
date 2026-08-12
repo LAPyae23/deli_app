@@ -13,6 +13,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatKyat } from '@/lib/currency';
 import type { CartItem, DeliveryAddressInfo } from '../types';
 
 export type PaymentMethod = 'cash' | 'bank';
@@ -33,7 +34,7 @@ interface OrderReceiptModalProps {
   /** Returns order number on success, null on failure */
   onConfirmPayment: () => Promise<string | null>;
   restaurantName?: string;
-  formatMoney?: (usd: number) => string;
+  formatMoney?: (amount: number) => string;
   onDoneRedirect?: () => void;
   savedAddresses?: DeliveryAddressInfo[];
   onDeliveryAddressChange?: (address: DeliveryAddressInfo) => void;
@@ -41,7 +42,7 @@ interface OrderReceiptModalProps {
 }
 
 function defaultMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatKyat(n);
 }
 
 export default function OrderReceiptModal({

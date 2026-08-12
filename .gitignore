@@ -35,3 +35,9 @@ jest-test-results.json
 
 # Optional: if using TurboRepo or monorepo
 turbo/
+
+# Local uploads (keep folder via .gitkeep)
+public/uploads/*
+!public/uploads/.gitkeep
+
+.env.local

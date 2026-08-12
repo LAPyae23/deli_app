@@ -106,7 +106,6 @@ export default function AddressPickerModal({
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPin(next);
         setCenter(next);
-        setLabel('Current Location');
         setLocating(false);
         toast.success('Location detected');
 
@@ -115,6 +114,14 @@ export default function AddressPickerModal({
         const address = await reverseGeocode(next.lat, next.lng);
         setResolvedAddress(address || `Current location · ${formatCoords(next.lat, next.lng)}`);
         setGeocoding(false);
+        setLabel((prev) =>
+          !prev ||
+          prev === 'Pinned Location' ||
+          prev === 'Selected Location' ||
+          prev === 'Current Location'
+            ? 'Home'
+            : prev
+        );
       },
       () => {
         setLocating(false);
@@ -125,13 +132,14 @@ export default function AddressPickerModal({
   };
 
   const handleConfirm = () => {
+    const trimmedLabel = label.trim() || 'Saved Location';
     const address =
       resolvedAddress && resolvedAddress !== 'Fetching address...'
         ? resolvedAddress
-        : `${label} · Yangon, Myanmar (${formatCoords(pin.lat, pin.lng)})`;
+        : `${trimmedLabel} · Yangon, Myanmar (${formatCoords(pin.lat, pin.lng)})`;
 
     onConfirm({
-      label,
+      label: trimmedLabel,
       address,
       lat: pin.lat,
       lng: pin.lng,
@@ -170,8 +178,10 @@ export default function AddressPickerModal({
         <div className="space-y-3 border-t border-border px-5 py-4">
           <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/50 p-3">
             <Crosshair className="mt-0.5 h-4 w-4 flex-shrink-0 text-customer" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-foreground">{label}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                Pin location
+              </p>
               <p className="text-xs text-muted-foreground font-tabular">
                 {formatCoords(pin.lat, pin.lng)}
               </p>
@@ -181,6 +191,36 @@ export default function AddressPickerModal({
                 </p>
               )}
             </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Label this address
+            </p>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {['Home', 'Work', 'Other'].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setLabel(preset)}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                    label === preset
+                      ? 'border-customer bg-orange-50 text-customer'
+                      : 'border-border bg-card text-muted-foreground hover:border-customer/40'
+                  }`}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              className="input-field py-2.5 text-sm"
+              placeholder="e.g. Home, Work, Mom's house"
+              maxLength={40}
+            />
           </div>
 
           <button
@@ -196,10 +236,10 @@ export default function AddressPickerModal({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={geocoding}
+            disabled={geocoding || !label.trim()}
             className="btn-primary w-full justify-center py-3"
           >
-            Confirm Address
+            Save Address
           </button>
         </div>
       </div>

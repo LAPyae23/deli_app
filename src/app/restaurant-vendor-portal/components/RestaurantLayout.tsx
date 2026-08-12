@@ -3,25 +3,31 @@
 import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard, ClipboardList, UtensilsCrossed,
-  Settings, LogOut, ChevronLeft, ChevronRight, Bell, Store,
+  Settings, LogOut, ChevronLeft, ChevronRight, Store,
   TriangleAlert,
 } from 'lucide-react';
 import AppLogo from '@/components/ui/AppLogo';
+import ThemeToggle from '@/components/ThemeToggle';
+import NotificationBell, { type BellNotificationItem } from '@/components/NotificationBell';
 import StoreStatusSwitcher from './StoreStatusSwitcher';
 import OrderQueue from './OrderQueue';
 import MenuManagement from './MenuManagement';
 import RevenueKPIs from './RevenueKPIs';
+import KitchenInsights from './KitchenInsights';
 import RestaurantProfile from './RestaurantProfile';
 
 type RestaurantTab = 'dashboard' | 'orders' | 'menu' | 'profile';
 
-const RESTAURANT_ID = 'burger-bliss-id';
-
-const NAV_ITEMS: { key: string; tab: RestaurantTab; icon: React.ElementType; label: string; badge: string | null }[] = [
-  { key: 'rnav-dashboard', tab: 'dashboard', icon: LayoutDashboard, label: 'Dashboard', badge: null },
-  { key: 'rnav-orders', tab: 'orders', icon: ClipboardList, label: 'Orders', badge: '4' },
-  { key: 'rnav-menu', tab: 'menu', icon: UtensilsCrossed, label: 'Menu', badge: null },
-  { key: 'rnav-profile', tab: 'profile', icon: Store, label: 'Profile', badge: null },
+const BASE_NAV_ITEMS: {
+  key: string;
+  tab: RestaurantTab;
+  icon: React.ElementType;
+  label: string;
+}[] = [
+  { key: 'rnav-dashboard', tab: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { key: 'rnav-orders', tab: 'orders', icon: ClipboardList, label: 'Orders' },
+  { key: 'rnav-menu', tab: 'menu', icon: UtensilsCrossed, label: 'Menu' },
+  { key: 'rnav-profile', tab: 'profile', icon: Store, label: 'Profile' },
 ];
 
 type HeaderProfile = {
@@ -31,10 +37,42 @@ type HeaderProfile = {
 };
 
 const DEFAULT_HEADER: HeaderProfile = {
-  restaurantName: 'Burger Bliss',
-  address: '145 Broadway Ave, Manhattan',
+  restaurantName: '',
+  address: '',
   logoImage: '',
 };
+
+const FALLBACK_LOGO = '/assets/images/no_image.png';
+
+function SafeLogoImage({
+  src,
+  alt,
+  className,
+}: {
+  src?: string | null;
+  alt: string;
+  className: string;
+}) {
+  const safeSrc =
+    typeof src === 'string' && src.trim() ? src.trim() : FALLBACK_LOGO;
+  const isData = safeSrc.startsWith('data:');
+
+  if (!src?.trim()) return null;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      key={isData ? safeSrc.slice(0, 64) : safeSrc}
+      src={safeSrc}
+      alt={alt || 'Restaurant logo'}
+      className={className}
+      onError={(e) => {
+        e.currentTarget.onerror = null;
+        e.currentTarget.src = FALLBACK_LOGO;
+      }}
+    />
+  );
+}
 
 function RestaurantTabContent({ activeTab }: { activeTab: RestaurantTab }) {
   switch (activeTab) {
@@ -42,6 +80,7 @@ function RestaurantTabContent({ activeTab }: { activeTab: RestaurantTab }) {
       return (
         <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
           <RevenueKPIs />
+          <KitchenInsights />
         </div>
       );
     case 'orders':
@@ -71,22 +110,131 @@ export default function RestaurantLayout() {
   const [activeTab, setActiveTab] = useState<RestaurantTab>('dashboard');
   const [collapsed, setCollapsed] = useState(false);
   const [headerProfile, setHeaderProfile] = useState<HeaderProfile>(DEFAULT_HEADER);
+  const [pendingOrderCount, setPendingOrderCount] = useState(0);
+  const [orderNotifications, setOrderNotifications] = useState<BellNotificationItem[]>([]);
+
+  useEffect(() => {
+    const role = localStorage.getItem('fooddash_session_role');
+    if (role !== 'RESTAURANT') {
+      window.location.href = '/';
+    }
+  }, []);
+
+  useEffect(() => {
+    function onProfileUpdated(event: Event) {
+      const detail = (event as CustomEvent<Partial<HeaderProfile>>).detail || {};
+      setHeaderProfile((prev) => ({
+        restaurantName: detail.restaurantName?.trim() || prev.restaurantName,
+        address: detail.address ?? prev.address,
+        logoImage: detail.logoImage ?? prev.logoImage,
+      }));
+    }
+
+    window.addEventListener('fooddash:restaurant-profile-updated', onProfileUpdated);
+    return () => {
+      window.removeEventListener('fooddash:restaurant-profile-updated', onProfileUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPendingOrders() {
+      try {
+        const restaurantId = localStorage.getItem('fooddash_session_id') || '';
+        const restaurantName =
+          localStorage.getItem('fooddash_session_name') ||
+          headerProfile.restaurantName ||
+          '';
+
+        const params = new URLSearchParams();
+        if (restaurantId) params.set('restaurantId', restaurantId);
+        else if (restaurantName) params.set('restaurantName', restaurantName);
+        else return;
+
+        const res = await fetch(`/api/orders?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+        const orders = Array.isArray(data.orders) ? data.orders : [];
+        const pending = orders.filter(
+          (o: { status?: string }) => String(o.status || '').toUpperCase() === 'PENDING'
+        );
+        setPendingOrderCount(pending.length);
+        setOrderNotifications(
+          pending.slice(0, 8).map(
+            (o: {
+              _id?: string;
+              id?: string;
+              orderNumber?: string;
+              customerName?: string;
+              items?: unknown[];
+            }) => ({
+              id: String(o._id || o.id || o.orderNumber),
+              title: `New order ${o.orderNumber || ''}`.trim(),
+              body: o.customerName
+                ? `${o.customerName}${Array.isArray(o.items) ? ` · ${o.items.length} items` : ''}`
+                : 'Incoming order awaiting acceptance',
+              onClick: () => setActiveTab('orders'),
+            })
+          )
+        );
+      } catch (error) {
+        console.warn('Failed to load pending order count', error);
+      }
+    }
+
+    loadPendingOrders();
+    const interval = setInterval(loadPendingOrders, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [headerProfile.restaurantName]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadProfile() {
       try {
-        const res = await fetch(`/api/restaurant/profile?restaurantId=${RESTAURANT_ID}`);
-        const data = await res.json();
-        if (!res.ok || !data.success || !data.profile || cancelled) return;
+        const restaurantId = localStorage.getItem('fooddash_session_id') || '';
+        const sessionName = localStorage.getItem('fooddash_session_name') || '';
+        const sessionEmail = localStorage.getItem('fooddash_session_email') || '';
 
-        const p = data.profile;
-        setHeaderProfile({
-          restaurantName: p.restaurantName || DEFAULT_HEADER.restaurantName,
-          address: p.address || DEFAULT_HEADER.address,
-          logoImage: p.logoImage || '',
-        });
+        if (!restaurantId) {
+          if (!cancelled) {
+            setHeaderProfile({
+              restaurantName: sessionName || sessionEmail || 'Your Restaurant',
+              address: '',
+              logoImage: '',
+            });
+          }
+          return;
+        }
+
+        const res = await fetch(
+          `/api/restaurant/profile?restaurantId=${encodeURIComponent(restaurantId)}`
+        );
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+
+        if (data.profile) {
+          const p = data.profile;
+          const name = p.restaurantName || sessionName || sessionEmail || 'Your Restaurant';
+          setHeaderProfile({
+            restaurantName: name,
+            address: p.address || '',
+            logoImage: p.logoImage || '',
+          });
+          if (p.restaurantName) {
+            localStorage.setItem('fooddash_session_name', p.restaurantName);
+          }
+        } else {
+          setHeaderProfile({
+            restaurantName: sessionName || sessionEmail || 'Your Restaurant',
+            address: '',
+            logoImage: '',
+          });
+        }
       } catch (error) {
         console.warn('Failed to load restaurant profile for header', error);
       }
@@ -103,6 +251,12 @@ export default function RestaurantLayout() {
     };
   }, [activeTab]);
 
+  const navItems = BASE_NAV_ITEMS.map((item) => ({
+    ...item,
+    badge:
+      item.tab === 'orders' && pendingOrderCount > 0 ? String(pendingOrderCount) : null,
+  }));
+
   return (
     <div className="flex min-h-screen bg-background">
       <aside
@@ -117,11 +271,10 @@ export default function RestaurantLayout() {
         >
           {!collapsed && (
             <div className="flex min-w-0 items-center gap-2">
-              {headerProfile.logoImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
+              {headerProfile.logoImage?.trim() ? (
+                <SafeLogoImage
                   src={headerProfile.logoImage}
-                  alt={headerProfile.restaurantName}
+                  alt={headerProfile.restaurantName || 'Restaurant'}
                   className="h-7 w-7 flex-shrink-0 rounded-lg object-cover"
                 />
               ) : (
@@ -134,11 +287,10 @@ export default function RestaurantLayout() {
             </div>
           )}
           {collapsed &&
-            (headerProfile.logoImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+            (headerProfile.logoImage?.trim() ? (
+              <SafeLogoImage
                 src={headerProfile.logoImage}
-                alt={headerProfile.restaurantName}
+                alt={headerProfile.restaurantName || 'Restaurant'}
                 className="h-7 w-7 rounded-lg object-cover"
               />
             ) : (
@@ -161,7 +313,7 @@ export default function RestaurantLayout() {
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-3 scrollbar-hide">
           {!collapsed && <p className="section-label mb-2 mt-1 px-3">Operations</p>}
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = activeTab === item.tab;
             return (
               <button
@@ -190,6 +342,7 @@ export default function RestaurantLayout() {
         </nav>
 
         <div className="space-y-1 border-t border-border p-3">
+          <ThemeToggle collapsed={collapsed} showLabel />
           <button
             type="button"
             onClick={() => setActiveTab('profile')}
@@ -226,28 +379,31 @@ export default function RestaurantLayout() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <div className="flex items-center gap-1.5 rounded-lg bg-warning/10 px-3 py-1.5 text-xs font-semibold text-warning">
-              <TriangleAlert className="h-3.5 w-3.5" />
-              4 new orders
-            </div>
-            <button type="button" className="relative rounded-lg p-2 transition-colors hover:bg-muted">
-              <Bell className="h-5 w-5 text-muted-foreground" />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger" />
-            </button>
-            <div className="flex items-center gap-2">
-              {headerProfile.logoImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={headerProfile.logoImage}
-                  alt={headerProfile.restaurantName}
-                  className="h-8 w-8 rounded-full bg-muted object-cover"
-                />
-              ) : (
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-restaurant/10 text-restaurant">
+            {pendingOrderCount > 0 && (
+              <div className="flex items-center gap-1.5 rounded-lg bg-warning/10 px-3 py-1.5 text-xs font-semibold text-warning">
+                <TriangleAlert className="h-3.5 w-3.5" />
+                {pendingOrderCount} new order{pendingOrderCount === 1 ? '' : 's'}
+              </div>
+            )}
+            <ThemeToggle className="relative rounded-lg p-2 transition-colors hover:bg-muted" />
+            <NotificationBell
+              showDot={pendingOrderCount > 0}
+              items={orderNotifications}
+              emptyLabel="No incoming orders"
+            />
+            <div className="hidden items-center gap-2 md:flex">
+              <span className="relative flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-restaurant/10 text-restaurant ring-1 ring-border">
+                {headerProfile.logoImage?.trim() ? (
+                  <SafeLogoImage
+                    src={headerProfile.logoImage}
+                    alt={headerProfile.restaurantName}
+                    className="h-8 w-8 object-cover"
+                  />
+                ) : (
                   <Store className="h-4 w-4" />
-                </div>
-              )}
-              <div className="hidden md:block">
+                )}
+              </span>
+              <div>
                 <p className="max-w-[140px] truncate text-sm font-semibold leading-tight">
                   {headerProfile.restaurantName}
                 </p>
@@ -262,7 +418,7 @@ export default function RestaurantLayout() {
         </main>
 
         <nav className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-border bg-card px-1 py-1 md:hidden">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = activeTab === item.tab;
             return (
               <button
@@ -273,7 +429,14 @@ export default function RestaurantLayout() {
                   isActive ? 'text-restaurant' : 'text-muted-foreground'
                 }`}
               >
-                <item.icon className="h-5 w-5" />
+                <div className="relative">
+                  <item.icon className="h-5 w-5" />
+                  {item.badge && (
+                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-restaurant px-1 text-[10px] font-bold text-white">
+                      {item.badge}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-semibold">{item.label}</span>
                 {isActive && (
                   <span className="absolute left-1/2 top-0 h-0.5 w-8 -translate-x-1/2 rounded-full bg-restaurant" />

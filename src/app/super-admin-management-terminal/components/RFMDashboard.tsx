@@ -1,0 +1,310 @@
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  Legend,
+} from 'recharts';
+import {
+  Crown,
+  Loader2,
+  Mail,
+  MoonStar,
+  Users,
+  Sparkles,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { formatKyat } from '@/lib/currency';
+
+type RfmSegment = 'Top VIP' | 'Sleeping Beauty' | 'New/Normal';
+
+type SegmentSlice = {
+  name: RfmSegment;
+  value: number;
+  percentage: number;
+};
+
+type RfmCustomer = {
+  customerId: string;
+  customerName: string;
+  recencyDays: number;
+  frequency: number;
+  monetary: number;
+  lastOrderAt: string;
+  segment: RfmSegment;
+};
+
+type RfmResponse = {
+  success: boolean;
+  summary?: {
+    totalCustomers: number;
+    segments: SegmentSlice[];
+  };
+  sleepingBeauties?: RfmCustomer[];
+  message?: string;
+};
+
+const SEGMENT_COLORS: Record<RfmSegment, string> = {
+  'Top VIP': '#f59e0b',
+  'Sleeping Beauty': '#a78bfa',
+  'New/Normal': '#34d399',
+};
+
+function formatMoney(amount: number) {
+  return formatKyat(amount);
+}
+
+export default function RFMDashboard() {
+  const [segments, setSegments] = useState<SegmentSlice[]>([]);
+  const [sleepingBeauties, setSleepingBeauties] = useState<RfmCustomer[]>([]);
+  const [totalCustomers, setTotalCustomers] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/admin/rfm-analysis');
+        const data = (await res.json()) as RfmResponse;
+        if (!res.ok || !data.success) {
+          throw new Error(data.message || 'Failed to load RFM analysis');
+        }
+        if (!cancelled) {
+          setSegments(Array.isArray(data.summary?.segments) ? data.summary!.segments : []);
+          setSleepingBeauties(
+            Array.isArray(data.sleepingBeauties) ? data.sleepingBeauties : []
+          );
+          setTotalCustomers(Number(data.summary?.totalCustomers) || 0);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load');
+          setSegments([]);
+          setSleepingBeauties([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const chartData = useMemo(
+    () =>
+      segments
+        .filter((s) => s.value > 0)
+        .map((s) => ({
+          name: s.name,
+          value: s.value,
+          percentage: s.percentage,
+          color: SEGMENT_COLORS[s.name],
+        })),
+    [segments]
+  );
+
+  function sendDiscount(customer: RfmCustomer) {
+    setSentIds((prev) => new Set(prev).add(customer.customerId));
+    toast.success(`20% discount email queued for ${customer.customerName}`);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-3 rounded-2xl border border-border bg-card px-6 py-16 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin text-admin" />
+        <p className="text-sm font-medium">Scoring customers with RFM…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-danger/30 bg-danger/10 px-6 py-8 text-center">
+        <p className="text-sm font-semibold text-danger">{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <section className="space-y-5 rounded-2xl border border-border bg-card p-5 sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <Crown className="h-5 w-5 text-amber-400" />
+            <h2 className="text-xl font-bold text-foreground">RFM Customer Segmentation</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Recency · Frequency · Monetary across {totalCustomers.toLocaleString()} customers
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {segments.map((s) => (
+            <div
+              key={s.name}
+              className="rounded-lg border border-border bg-background/70 px-3 py-1.5"
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {s.name}
+              </p>
+              <p className="text-sm font-bold text-foreground font-tabular">
+                {s.value}{' '}
+                <span className="text-xs font-medium text-muted-foreground">({s.percentage}%)</span>
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
+        <div className="rounded-xl border border-border bg-background/50 p-4 xl:col-span-2">
+          <div className="mb-2 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-admin" />
+            <h3 className="text-sm font-bold text-foreground">Segment Mix</h3>
+          </div>
+          <div className="h-72 w-full">
+            {chartData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                No customer segments yet
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={chartData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="48%"
+                    innerRadius={58}
+                    outerRadius={92}
+                    paddingAngle={3}
+                    stroke="var(--card)"
+                    strokeWidth={2}
+                  >
+                    {chartData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: 'var(--card)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 12,
+                      color: 'var(--foreground)',
+                      fontSize: 12,
+                    }}
+                    formatter={(value: number, name: string, props) => {
+                      const pct = props?.payload?.percentage ?? 0;
+                      return [`${value} customers (${pct}%)`, name];
+                    }}
+                  />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={36}
+                    formatter={(value) => (
+                      <span className="text-xs text-muted-foreground">{value}</span>
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="xl:col-span-3">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <MoonStar className="h-4 w-4 text-violet-400" />
+              <h3 className="text-sm font-bold text-foreground">Sleeping Beauties</h3>
+              <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-300">
+                Win-back
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              High value / frequency · inactive recently
+            </p>
+          </div>
+
+          {sleepingBeauties.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border px-4 py-14 text-center">
+              <Users className="h-5 w-5 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                No Sleeping Beauties found — great retention so far.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-border">
+              <div className="max-h-[22rem] overflow-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="sticky top-0 z-10 bg-background text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Customer</th>
+                      <th className="px-3 py-3 font-semibold">R (days)</th>
+                      <th className="px-3 py-3 font-semibold">F</th>
+                      <th className="px-3 py-3 font-semibold">M</th>
+                      <th className="px-4 py-3 font-semibold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border bg-background/40">
+                    {sleepingBeauties.map((c) => {
+                      const sent = sentIds.has(c.customerId);
+                      return (
+                        <tr
+                          key={c.customerId}
+                          className="transition-colors hover:bg-muted/40"
+                        >
+                          <td className="px-4 py-3">
+                            <p className="font-semibold text-foreground">{c.customerName}</p>
+                            <p className="truncate text-[11px] text-muted-foreground font-tabular">
+                              {c.customerId}
+                            </p>
+                          </td>
+                          <td className="px-3 py-3 font-tabular text-violet-300">
+                            {c.recencyDays}
+                          </td>
+                          <td className="px-3 py-3 font-tabular text-foreground">
+                            {c.frequency}
+                          </td>
+                          <td className="px-3 py-3 font-tabular text-foreground">
+                            {formatMoney(c.monetary)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              disabled={sent}
+                              onClick={() => sendDiscount(c)}
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                                sent
+                                  ? 'cursor-default bg-emerald-500/15 text-emerald-400'
+                                  : 'bg-violet-500/20 text-violet-200 hover:bg-violet-500/30'
+                              }`}
+                            >
+                              <Mail className="h-3.5 w-3.5" />
+                              {sent ? 'Email Sent' : 'Send 20% Discount Email'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

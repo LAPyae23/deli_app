@@ -1,5 +1,6 @@
 'use client';
 
+import 'leaflet/dist/leaflet.css';
 /**
  * OpenStreetMap + Leaflet map surface (client-only).
  * Parent should load this via next/dynamic({ ssr: false }).
@@ -9,7 +10,6 @@
 import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 
 const pinIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
@@ -49,7 +49,7 @@ export default function OsmMapPicker({ center, pin, onPick }: OsmMapPickerProps)
     <MapContainer
       center={[center.lat, center.lng]}
       zoom={14}
-      style={{ width: '100%', height: '100%', zIndex: 0 }}
+      style={{ height: '100%', width: '100%', minHeight: '250px', zIndex: 0 }}
       scrollWheelZoom
     >
       <TileLayer
