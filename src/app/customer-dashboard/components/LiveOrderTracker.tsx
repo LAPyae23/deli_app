@@ -13,18 +13,24 @@ import {
   Loader2,
   AlertTriangle,
   Star,
-  Store,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import ChatWidget from '@/components/ChatWidget';
+import { CUSTOMER_TO_RIDER_QUICK_REPLIES } from '@/lib/support';
 
 const LiveTrackerMap = dynamic(() => import('./LiveTrackerMap'), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-muted text-sm text-muted-foreground">
+    <div className="mt-4 flex h-[250px] w-full items-center justify-center rounded-xl border border-border bg-muted text-sm text-muted-foreground">
       Loading map…
     </div>
   ),
 });
+
+const MOCK_COORDS = {
+  restaurant: { lat: 16.82, lng: 96.145 },
+  customer: { lat: 16.8409, lng: 96.1735 },
+};
 
 type LatLng = { lat: number; lng: number };
 
@@ -41,12 +47,16 @@ type TrackedOrder = {
   _id: string;
   orderNumber?: string;
   restaurantName?: string;
+  restaurantId?: string;
   status?: OrderStatus;
   prepTime?: number;
+  travelMins?: number;
+  durationMins?: number;
   items?: Array<{ name?: string; quantity?: number }>;
   restaurantCoords?: { lat?: number; lng?: number };
   deliveryAddress?: { lat?: number; lng?: number; address?: string };
   riderCoords?: { lat?: number; lng?: number };
+  riderId?: string;
   riderName?: string;
 };
 
@@ -99,8 +109,38 @@ function parseCoords(
   return fallback;
 }
 
+function haversineKm(a: LatLng, b: LatLng): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
 function riderFallbackForStatus(_status: string, restaurant: LatLng): LatLng {
   return { ...restaurant };
+}
+
+/** ETA minutes from order prep + travel (falls back to durationMins) */
+function computeEtaMinutes(order?: TrackedOrder | null): number {
+  if (!order) return 0;
+  const prep = Number(order.prepTime);
+  const travel = Number(order.travelMins);
+  const duration = Number(order.durationMins);
+
+  if (Number.isFinite(prep) && prep >= 0 && Number.isFinite(travel) && travel >= 0) {
+    return Math.max(1, Math.round(prep + travel));
+  }
+  if (Number.isFinite(duration) && duration > 0) {
+    return Math.round(duration);
+  }
+  if (Number.isFinite(prep) && prep > 0) {
+    return Math.round(prep + 15);
+  }
+  return 30;
 }
 
 function StarRating({
@@ -146,11 +186,18 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
   const [isLoading, setIsLoading] = useState(true);
   const [etaSeconds, setEtaSeconds] = useState(0);
   const [riderLocation, setRiderLocation] = useState<LatLng>(FALLBACK_RESTAURANT);
-  const [restaurantRating, setRestaurantRating] = useState(5);
+  const [restaurantLogoUrl, setRestaurantLogoUrl] = useState<string | null>(null);
   const [riderRating, setRiderRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [sessionId, setSessionId] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
   const syncedPrepRef = useRef<number | null>(null);
+  const logoFetchedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    setSessionId(localStorage.getItem('fooddash_session_id') || '');
+  }, []);
 
   const restaurantLocation = useMemo(
     () =>
@@ -191,6 +238,11 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
             nextOrder?.restaurantCoords?.lng,
             FALLBACK_RESTAURANT
           );
+          const customer = parseCoords(
+            nextOrder?.deliveryAddress?.lat,
+            nextOrder?.deliveryAddress?.lng,
+            FALLBACK_CUSTOMER
+          );
 
           const riderLat = Number(nextOrder?.riderCoords?.lat);
           const riderLng = Number(nextOrder?.riderCoords?.lng);
@@ -200,15 +252,46 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
             setRiderLocation(riderFallbackForStatus(status, restaurant));
           }
 
-          const prep = Number(nextOrder?.prepTime);
-          if (
-            Number.isFinite(prep) &&
-            prep > 0 &&
-            syncedPrepRef.current !== prep &&
-            status === 'PREPARING'
-          ) {
-            syncedPrepRef.current = prep;
-            setEtaSeconds(prep * 60);
+          const travelFromOrder = Number(nextOrder?.travelMins);
+          const etaFromOrder = computeEtaMinutes(nextOrder);
+
+          if (status === 'PREPARING' || status === 'READY' || status === 'PENDING' || status === 'PLACED') {
+            const totalEta = etaFromOrder * 60;
+            if (syncedPrepRef.current !== totalEta) {
+              syncedPrepRef.current = totalEta;
+              setEtaSeconds(totalEta);
+            }
+          } else if (status === 'OUT_FOR_DELIVERY') {
+            const riderPos =
+              Number.isFinite(riderLat) && Number.isFinite(riderLng)
+                ? { lat: riderLat, lng: riderLng }
+                : restaurant;
+            const riderDistKm = haversineKm(riderPos, customer);
+            const travelMins =
+              Number.isFinite(travelFromOrder) && travelFromOrder > 0
+                ? travelFromOrder
+                : Math.max(5, Math.round(riderDistKm * 3));
+            const riderTimeSeconds = travelMins * 60;
+            setEtaSeconds((prev) =>
+              Math.abs(prev - riderTimeSeconds) > 30 ? riderTimeSeconds : prev
+            );
+          }
+
+          // Fetch restaurant logo once per restaurantId
+          const rid = String(nextOrder?.restaurantId || '').trim();
+          if (rid && logoFetchedFor.current !== rid) {
+            logoFetchedFor.current = rid;
+            try {
+              const logoRes = await fetch(
+                `/api/restaurant/profile?restaurantId=${encodeURIComponent(rid)}`
+              );
+              const logoData = await logoRes.json();
+              if (logoRes.ok && logoData.success && logoData.profile?.logoImage) {
+                if (!cancelled) setRestaurantLogoUrl(String(logoData.profile.logoImage));
+              }
+            } catch {
+              // keep fallback store icon
+            }
           }
         }
       } catch (error) {
@@ -242,7 +325,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
       const res = await fetch(`/api/orders/${activeOrderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restaurantRating, riderRating, reviewComment }),
+        body: JSON.stringify({ riderRating, reviewComment }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to submit review');
@@ -260,9 +343,11 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
   const isRejected = status === 'REJECTED' || status === 'CANCELLED';
   const activeStepIndex = statusToStepIndex(status);
   const showRider = status === 'OUT_FOR_DELIVERY' || status === 'READY' || status === 'PREPARING';
+  const showRiderOnMap = status === 'OUT_FOR_DELIVERY';
 
   const etaMinutes = Math.floor(etaSeconds / 60);
   const etaSecsRem = etaSeconds % 60;
+  const mapEtaMinutes = useMemo(() => computeEtaMinutes(order), [order]);
 
   if (isLoading && !order) {
     return (
@@ -336,36 +421,17 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
               <CircleCheckBig className="h-7 w-7 text-success" />
             </div>
             <h3 className="text-lg font-bold text-foreground sm:text-xl">
-              Order Delivered! How was it?
+              Delivery Complete! How was your Rider?
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Rate your experience with the shop and rider.
+              Rate your delivery experience. You can rate the restaurant from its menu page.
             </p>
           </div>
 
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-muted/30 p-4">
               <div className="mb-3 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50">
-                  <Store className="h-4 w-4 text-customer" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">Restaurant</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {order?.restaurantName || 'Restaurant'}
-                  </p>
-                </div>
-              </div>
-              <StarRating
-                value={restaurantRating}
-                onChange={setRestaurantRating}
-                disabled={isSubmittingReview}
-              />
-            </div>
-
-            <div className="rounded-xl border border-border bg-muted/30 p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-950/40">
                   <Bike className="h-4 w-4 text-rider" />
                 </div>
                 <div className="min-w-0">
@@ -395,7 +461,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
                 onChange={(e) => setReviewComment(e.target.value)}
                 disabled={isSubmittingReview}
                 rows={3}
-                placeholder="Leave a comment for the shop and rider..."
+                placeholder="Leave a comment for your rider..."
                 className="input-field w-full resize-none py-2.5 text-sm"
               />
             </div>
@@ -432,6 +498,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
   }
 
   return (
+    <>
     <div className="bg-card border border-border rounded-2xl overflow-hidden card-shadow-md animate-fade-in">
       <div className="gradient-orange px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -455,7 +522,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
           {!isPending && (
             <div className="text-right">
               <p className="text-white/70 text-xs">
-                {status === 'PREPARING' ? 'Ready in' : 'Arrives in'}
+                Arrives in
               </p>
               <p className="text-white font-bold text-lg sm:text-xl font-tabular">
                 {String(etaMinutes).padStart(2, '0')}:{String(etaSecsRem).padStart(2, '0')}
@@ -472,34 +539,51 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
         </div>
       </div>
 
-      {isPending ? (
-        <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-orange-50">
-            <Loader2 className="h-7 w-7 animate-spin text-customer" />
-          </div>
-          <div>
-            <p className="text-base font-bold text-foreground">Waiting for restaurant to confirm…</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {order?.restaurantName || 'The restaurant'} will accept or decline shortly.
-            </p>
-          </div>
+      <div className="relative z-0 px-4 sm:px-6">
+        <div className="mt-4 h-[280px] w-full overflow-hidden rounded-xl border border-border sm:h-[320px]">
+          <LiveTrackerMap
+            restaurantLocation={
+              order?.restaurantCoords?.lat != null && order?.restaurantCoords?.lng != null
+                ? restaurantLocation
+                : MOCK_COORDS.restaurant
+            }
+            customerLocation={
+              order?.deliveryAddress?.lat != null && order?.deliveryAddress?.lng != null
+                ? customerLocation
+                : MOCK_COORDS.customer
+            }
+            riderLocation={riderLocation}
+            showRider={showRiderOnMap}
+            restaurantLogoUrl={restaurantLogoUrl}
+            restaurantName={order?.restaurantName || 'Restaurant'}
+            etaMinutes={mapEtaMinutes}
+            status={String(status || 'PENDING')}
+          />
         </div>
-      ) : (
-        <>
-          <div className="h-52 sm:h-64 w-full relative">
-            <LiveTrackerMap
-              restaurantLocation={restaurantLocation}
-              customerLocation={customerLocation}
-              riderLocation={riderLocation}
-              showRider={showRider}
-            />
+        {isPending && (
+          <div className="absolute inset-0 z-10 mt-4 flex flex-col items-center justify-center gap-3 rounded-xl bg-background/50 px-6 text-center backdrop-blur-sm">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-orange-50 dark:bg-orange-950/50">
+              <Loader2 className="h-7 w-7 animate-spin text-customer" />
+            </div>
+            <div>
+              <p className="text-base font-bold text-foreground">
+                Waiting for restaurant to confirm…
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {order?.restaurantName || 'The restaurant'} will accept or decline shortly.
+              </p>
+            </div>
           </div>
+        )}
+      </div>
 
+      {!isPending && (
+        <>
           <div className="px-4 sm:px-6 py-4 sm:py-5">
-            <div className="flex items-start sm:items-center justify-between relative">
-              <div className="absolute left-0 right-0 top-4 sm:top-5 h-0.5 bg-border mx-6 sm:mx-8" />
+            <div className="relative flex items-start justify-between sm:items-center">
+              <div className="absolute left-0 right-0 top-4 mx-6 h-0.5 bg-border sm:top-5 sm:mx-8" />
               <div
-                className="absolute left-6 sm:left-8 top-4 sm:top-5 h-0.5 bg-customer transition-all duration-700"
+                className="absolute left-6 top-4 h-0.5 bg-customer transition-all duration-700 sm:left-8 sm:top-5"
                 style={{
                   width: `${(activeStepIndex / (ORDER_STEPS.length - 1)) * 100}%`,
                   maxWidth: 'calc(100% - 3rem)',
@@ -509,18 +593,21 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
                 const isCompleted = i < activeStepIndex;
                 const isActive = i === activeStepIndex;
                 return (
-                  <div key={step.key} className="relative flex flex-col items-center gap-1.5 sm:gap-2 z-10">
+                  <div
+                    key={step.key}
+                    className="relative z-10 flex flex-col items-center gap-1.5 sm:gap-2"
+                  >
                     <div
-                      className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full border-2 flex items-center justify-center transition-all duration-300 ${
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border-2 transition-all duration-300 sm:h-10 sm:w-10 ${
                         isCompleted
-                          ? 'bg-customer border-customer'
+                          ? 'border-customer bg-customer'
                           : isActive
-                            ? 'bg-orange-50 border-customer'
-                            : 'bg-card border-border'
+                            ? 'border-customer bg-orange-50'
+                            : 'border-border bg-card'
                       }`}
                     >
                       <step.icon
-                        className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
+                        className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${
                           isCompleted
                             ? 'text-white'
                             : isActive
@@ -534,7 +621,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
                     </div>
                     <div className="text-center">
                       <p
-                        className={`text-[10px] sm:text-xs font-semibold ${
+                        className={`text-[10px] font-semibold sm:text-xs ${
                           isActive
                             ? 'text-foreground'
                             : isCompleted
@@ -545,7 +632,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
                         {step.label}
                       </p>
                       {isActive && (
-                        <p className="text-xs text-muted-foreground mt-0.5 hidden md:block">
+                        <p className="mt-0.5 hidden text-xs text-muted-foreground md:block">
                           {status === 'READY' ? 'Ready for rider pickup' : step.desc}
                         </p>
                       )}
@@ -557,13 +644,13 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
           </div>
 
           {showRider && (
-            <div className="px-4 sm:px-6 pb-4 sm:pb-5 flex items-center justify-between border-t border-border pt-3 sm:pt-4 gap-3">
-              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                  <Bike className="w-4 h-4 sm:w-5 sm:h-5 text-rider" />
+            <div className="flex items-center justify-between gap-3 border-t border-border px-4 pb-4 pt-3 sm:px-6 sm:pb-5 sm:pt-4">
+              <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 sm:h-10 sm:w-10">
+                  <Bike className="h-4 w-4 text-rider sm:h-5 sm:w-5" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate">
+                  <p className="truncate text-sm font-semibold">
                     {status === 'OUT_FOR_DELIVERY'
                       ? order?.riderName || 'Rider assigned'
                       : status === 'READY' || status === 'PREPARING'
@@ -578,19 +665,21 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
                 </div>
               </div>
               {status === 'OUT_FOR_DELIVERY' && (
-                <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+                <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
                   <button
                     type="button"
-                    className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold bg-muted rounded-lg hover:bg-border transition-colors"
+                    className="flex items-center gap-1 rounded-lg bg-muted px-2.5 py-2 text-xs font-semibold transition-colors hover:bg-border sm:gap-1.5 sm:px-3"
                   >
-                    <Phone className="w-3.5 h-3.5" />
+                    <Phone className="h-3.5 w-3.5" />
                     <span className="hidden sm:inline">Call</span>
                   </button>
                   <button
                     type="button"
-                    className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold bg-muted rounded-lg hover:bg-border transition-colors"
+                    onClick={() => order?.riderId && setChatOpen(true)}
+                    disabled={!order?.riderId}
+                    className="flex items-center gap-1 rounded-lg bg-muted px-2.5 py-2 text-xs font-semibold transition-colors hover:bg-border disabled:opacity-50 sm:gap-1.5 sm:px-3"
                   >
-                    <MessageCircle className="w-3.5 h-3.5" />
+                    <MessageCircle className="h-3.5 w-3.5" />
                     <span className="hidden sm:inline">Message</span>
                   </button>
                 </div>
@@ -600,5 +689,21 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
         </>
       )}
     </div>
+
+    {order?.riderId && sessionId && (
+      <ChatWidget
+        currentUserId={sessionId}
+        currentUserRole="CUSTOMER"
+        targetUserId={order.riderId}
+        targetUserRole="RIDER"
+        targetName={order.riderName || 'Rider'}
+        orderId={activeOrderId}
+        open={chatOpen}
+        onOpenChange={setChatOpen}
+        quickReplies={[...CUSTOMER_TO_RIDER_QUICK_REPLIES]}
+        accentClassName="bg-customer"
+      />
+    )}
+    </>
   );
 }

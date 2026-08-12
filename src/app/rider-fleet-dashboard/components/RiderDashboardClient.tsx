@@ -3,16 +3,29 @@
 import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  Bike, Home, DollarSign, ClipboardList, Settings, LogOut, Bell,
+  Bike, Home, DollarSign, ClipboardList, Settings, LogOut,
   MapPin, Phone, MessageCircle, Clock, Star, Navigation,
-  CheckCircle, X, TrendingUp, Route, Wallet, Package, PackageOpen,
-  UtensilsCrossed, Map as MapIcon, Save, Camera, User,
+  CheckCircle, X, TrendingUp, Route, Wallet,
+  UtensilsCrossed, Map as MapIcon, Save, Camera, User, Lock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
+import ChatWidget from '@/components/ChatWidget';
+import NotificationBell, { type BellNotificationItem } from '@/components/NotificationBell';
+import AppImage from '@/components/ui/AppImage';
+import Link from 'next/link';
+import { formatKyat } from '@/lib/currency';
+import {
+  SUPPORT_ADMIN_ID,
+  SUPPORT_ADMIN_NAME,
+  SUPPORT_ADMIN_ROLE,
+  RIDER_TO_CUSTOMER_QUICK_REPLIES,
+} from '@/lib/support';
+import { useNotificationSound } from '@/hooks/useNotificationSound';
 import EarningsChart from './EarningsChart';
+import PredictiveHeatmap from './PredictiveHeatmap';
 
-const RiderLiveMap = dynamic(() => import('./RiderLiveMap'), {
+const RiderRouteMap = dynamic(() => import('./RiderRouteMap'), {
   ssr: false,
   loading: () => (
     <div className="flex h-full w-full items-center justify-center bg-muted text-sm text-muted-foreground">
@@ -21,12 +34,17 @@ const RiderLiveMap = dynamic(() => import('./RiderLiveMap'), {
   ),
 });
 
+const MOCK_COORDS = {
+  rider: { lat: 16.79, lng: 96.15 },
+  restaurant: { lat: 16.82, lng: 96.145 },
+  customer: { lat: 16.8409, lng: 96.1735 },
+};
+
 type DutyStatus = 'OFFLINE' | 'AVAILABLE' | 'DELIVERING';
 type RiderTab = 'home' | 'routes' | 'earnings' | 'trips' | 'settings';
-type RouteStopType = 'FOOD' | 'PARCEL_PICKUP' | 'PARCEL_DROPOFF';
+type RouteStopType = 'FOOD';
 type RouteStopStatus = 'COMPLETED' | 'CURRENT' | 'UPCOMING';
 
-const RIDER_ID = 'rider-demo-id';
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const DISPATCH_POLL_MS = 10_000;
 
@@ -36,6 +54,8 @@ interface DispatchOrder {
   restaurant: string;
   restaurantAddr: string;
   customerAddr: string;
+  customerId: string;
+  customerName: string;
   pickupDistance: string;
   dropDistance: string;
   estimatedEarnings: number;
@@ -115,10 +135,12 @@ function mapApiOrderToDispatch(raw: Record<string, unknown>): DispatchOrder {
     restaurant: String(raw.restaurantName || 'Restaurant'),
     restaurantAddr: String(raw.restaurantName || 'Restaurant pickup'),
     customerAddr: String(deliveryAddress.address || 'Customer address'),
+    customerId: String(raw.customerId || ''),
+    customerName: String(raw.customerName || 'Customer'),
     pickupDistance: 'Nearby',
     dropDistance: `${dropKm.toFixed(1)} km`,
-    estimatedEarnings: deliveryFee > 0 ? deliveryFee : Math.max(5, Math.round(total * 0.12 * 100) / 100),
-    estimatedTip: Math.round(total * 0.05 * 100) / 100,
+    estimatedEarnings: deliveryFee > 0 ? deliveryFee : Math.max(1500, Math.round(total * 0.12)),
+    estimatedTip: Math.max(0, Math.round(total * 0.05)),
     items: itemCount || 1,
     restaurantCoords,
     customerCoords,
@@ -137,95 +159,6 @@ interface RouteStop {
   notes?: string;
 }
 
-const COMPLETED_TRIPS = [
-  { id: 'trip-001', orderNumber: '#FP-8940', restaurant: 'Burger Bliss', customer: 'Maya Chen', pickupAddr: '145 Broadway Ave', dropAddr: '123 Maple St', earnings: 6.40, tip: 2.00, distance: '2.4 km', duration: '18 min', completedAt: '15:52', status: 'DELIVERED' },
-  { id: 'trip-002', orderNumber: '#FP-8931', restaurant: 'Spice Route', customer: 'David Okonkwo', pickupAddr: '88 5th Ave', dropAddr: '401 Park Blvd', earnings: 7.20, tip: 3.00, distance: '3.1 km', duration: '24 min', completedAt: '14:38', status: 'DELIVERED' },
-  { id: 'trip-003', orderNumber: '#FP-8919', restaurant: 'Verde Kitchen', customer: 'Priya Sharma', pickupAddr: '22 W 72nd St', dropAddr: '55 Riverside Dr', earnings: 5.80, tip: 1.50, distance: '1.9 km', duration: '15 min', completedAt: '13:21', status: 'DELIVERED' },
-  { id: 'trip-004', orderNumber: '#FP-8908', restaurant: 'Sakura Ramen', customer: 'Tom Fitzgerald', pickupAddr: '200 E 60th St', dropAddr: '310 Lexington Ave', earnings: 8.10, tip: 0, distance: '3.8 km', duration: '31 min', completedAt: '12:44', status: 'DELIVERED' },
-  { id: 'trip-005', orderNumber: '#FP-8895', restaurant: 'Taco Loco', customer: 'Aisha Mensah', pickupAddr: '67 Canal St', dropAddr: '190 Grand St', earnings: 5.20, tip: 2.50, distance: '1.6 km', duration: '13 min', completedAt: '11:58', status: 'DELIVERED' },
-  { id: 'trip-006', orderNumber: '#FP-8880', restaurant: 'Crispy Seoul', customer: 'James Park', pickupAddr: '34 Mott St', dropAddr: '78 Bowery St', earnings: 6.90, tip: 1.00, distance: '2.2 km', duration: '19 min', completedAt: '11:15', status: 'DELIVERED' },
-];
-
-const TODAY_ROUTE_PLAN: RouteStop[] = [
-  {
-    id: 'stop-01',
-    type: 'FOOD',
-    location: 'Bahan',
-    address: '42 Inya Road, Bahan Township',
-    status: 'COMPLETED',
-    timeWindow: '09:15 – 09:40',
-    customerName: 'Aye Chan',
-    ref: '#FP-8940',
-    notes: 'Food drop-off · Burger Bliss',
-  },
-  {
-    id: 'stop-02',
-    type: 'PARCEL_PICKUP',
-    location: 'South Dagon',
-    address: 'No. 18, Yadanar St, South Dagon',
-    status: 'COMPLETED',
-    timeWindow: '10:00 – 10:25',
-    customerName: 'Ko Min Thu',
-    ref: '#C2C-2201',
-    notes: 'Small box · fragile',
-  },
-  {
-    id: 'stop-03',
-    type: 'FOOD',
-    location: 'Thingangyun',
-    address: '7 Waizayantar Rd, Thingangyun',
-    status: 'COMPLETED',
-    timeWindow: '10:40 – 11:05',
-    customerName: 'Su Su Hlaing',
-    ref: '#FP-8941',
-    notes: 'Food drop-off · Spice Route',
-  },
-  {
-    id: 'stop-04',
-    type: 'PARCEL_DROPOFF',
-    location: 'North Okkalapa',
-    address: 'Bldg C-12, Thudhamma Rd, North Okkalapa',
-    status: 'CURRENT',
-    timeWindow: '11:20 – 11:50',
-    customerName: 'Ma Thida Oo',
-    ref: '#C2C-2201',
-    notes: 'Deliver parcel from South Dagon',
-  },
-  {
-    id: 'stop-05',
-    type: 'PARCEL_PICKUP',
-    location: 'Yankin',
-    address: '88 Kabar Aye Pagoda Rd, Yankin',
-    status: 'UPCOMING',
-    timeWindow: '12:10 – 12:35',
-    customerName: 'U Zaw Win',
-    ref: '#C2C-2208',
-    notes: 'Envelope · documents',
-  },
-  {
-    id: 'stop-06',
-    type: 'FOOD',
-    location: 'Tamwe',
-    address: '15 Myaynigone Rd, Tamwe',
-    status: 'UPCOMING',
-    timeWindow: '12:50 – 13:15',
-    customerName: 'Hnin Ei Phyu',
-    ref: '#FP-8945',
-    notes: 'Food drop-off · Verde Kitchen',
-  },
-  {
-    id: 'stop-07',
-    type: 'PARCEL_DROPOFF',
-    location: 'Hlaing',
-    address: '3/A Parami Road, Hlaing Township',
-    status: 'UPCOMING',
-    timeWindow: '13:30 – 14:00',
-    customerName: 'Daw Khin Mar',
-    ref: '#C2C-2208',
-    notes: 'Deliver parcel from Yankin',
-  },
-];
-
 const ROUTE_TYPE_META: Record<
   RouteStopType,
   { label: string; icon: React.ElementType; badge: string; node: string; ring: string }
@@ -236,20 +169,6 @@ const ROUTE_TYPE_META: Record<
     badge: 'bg-orange-50 text-orange-600 border-orange-200',
     node: 'bg-orange-500',
     ring: 'ring-orange-200',
-  },
-  PARCEL_PICKUP: {
-    label: 'Parcel Pickup',
-    icon: PackageOpen,
-    badge: 'bg-teal-50 text-teal-700 border-teal-200',
-    node: 'bg-teal-500',
-    ring: 'ring-teal-200',
-  },
-  PARCEL_DROPOFF: {
-    label: 'Parcel Drop-off',
-    icon: Package,
-    badge: 'bg-rider/10 text-rider border-rider/20',
-    node: 'bg-rider',
-    ring: 'ring-rider/25',
   },
 };
 
@@ -302,10 +221,12 @@ function ContactRow({
   title,
   subtitle,
   label,
+  onMessage,
 }: {
   title: string;
   subtitle: string;
   label: string;
+  onMessage?: () => void;
 }) {
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5">
@@ -325,6 +246,7 @@ function ContactRow({
           </button>
           <button
             type="button"
+            onClick={onMessage}
             className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-rider"
             aria-label="Message"
           >
@@ -343,14 +265,76 @@ export default function RiderDashboardClient() {
   const [incomingDispatch, setIncomingDispatch] = useState<DispatchOrder | null>(null);
   const [dispatchTimer, setDispatchTimer] = useState(30);
   const [activeDelivery, setActiveDelivery] = useState<DispatchOrder | null>(null);
+  const [activeDeliveryStatus, setActiveDeliveryStatus] = useState<
+    'ACCEPTED' | 'PICKED_UP' | 'DELIVERED' | null
+  >(null);
   const [activeTab, setActiveTab] = useState<RiderTab>('home');
   const [riderPos, setRiderPos] = useState(INITIAL_RIDER_POS);
   const [accepting, setAccepting] = useState(false);
   const [profile, setProfile] = useState<RiderProfileForm>(INITIAL_PROFILE);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
+  const [sessionId, setSessionId] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
+  const playNotification = useNotificationSound();
 
   const showDispatch = !!incomingDispatch && dutyStatus === 'AVAILABLE' && !activeDelivery;
+
+  useEffect(() => {
+    const role = localStorage.getItem('fooddash_session_role');
+    if (role !== 'RIDER') {
+      window.location.href = '/';
+    }
+  }, []);
+
+  useEffect(() => {
+    setSessionId(localStorage.getItem('fooddash_session_id') || '');
+  }, []);
+
+  const loadRoutes = async () => {
+    try {
+      const sessionId = localStorage.getItem('fooddash_session_id');
+      if (!sessionId) return;
+
+      const res = await fetch(
+        `/api/rider/routes?riderId=${encodeURIComponent(sessionId)}`
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRouteStops(Array.isArray(data.routes) ? data.routes : []);
+      }
+    } catch (e) {
+      console.error('Failed to load rider routes', e);
+    }
+  };
+
+  useEffect(() => {
+    async function loadDashboard() {
+      try {
+        const sessionId = localStorage.getItem('fooddash_session_id');
+        if (!sessionId) return;
+
+        const res = await fetch(
+          `/api/rider/dashboard?riderId=${encodeURIComponent(sessionId)}`
+        );
+        const data = await res.json();
+        if (res.ok && data.success) setDashboardData(data);
+      } catch (e) {
+        console.error('Failed to load rider dashboard', e);
+      }
+    }
+
+    loadDashboard();
+    void loadRoutes();
+    const interval = setInterval(() => {
+      loadDashboard();
+      void loadRoutes();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Load rider profile
   useEffect(() => {
@@ -358,7 +342,15 @@ export default function RiderDashboardClient() {
     async function loadProfile() {
       setProfileLoading(true);
       try {
-        const res = await fetch(`/api/rider/profile?riderId=${RIDER_ID}`);
+        const sessionId = localStorage.getItem('fooddash_session_id');
+        if (!sessionId) {
+          if (!cancelled) setProfileLoading(false);
+          return;
+        }
+
+        const res = await fetch(
+          `/api/rider/profile?riderId=${encodeURIComponent(sessionId)}`
+        );
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load');
         if (!cancelled && data.profile) {
@@ -369,6 +361,13 @@ export default function RiderDashboardClient() {
             licensePlate: data.profile.licensePlate || '',
             profileImage: data.profile.profileImage || '',
           });
+          // Sync local duty toggle with RiderProfile.status (Offline riders get no dispatch)
+          if (String(data.profile.status) === 'Offline') {
+            setDutyStatus('OFFLINE');
+            setIncomingDispatch(null);
+          } else if (String(data.profile.status) === 'Online') {
+            setDutyStatus((prev) => (prev === 'DELIVERING' ? prev : 'AVAILABLE'));
+          }
         }
       } catch (error) {
         console.warn(error);
@@ -383,15 +382,23 @@ export default function RiderDashboardClient() {
     };
   }, []);
 
-  // Poll for available dispatch orders
+  // Poll for available dispatch orders (skipped when Offline in RiderProfile / duty)
   useEffect(() => {
     if (dutyStatus !== 'AVAILABLE' || activeDelivery) return;
 
     let cancelled = false;
+    const riderId = localStorage.getItem('fooddash_session_id') || '';
 
     async function pollAvailableOrders() {
       try {
-        const res = await fetch('/api/orders?status=PREPARING&unassigned=true');
+        // Server returns [] if this rider is Offline
+        const params = new URLSearchParams({
+          status: 'PREPARING',
+          unassigned: 'true',
+        });
+        if (riderId) params.set('forRiderId', riderId);
+
+        const res = await fetch(`/api/orders?${params.toString()}`);
         const data = await res.json();
         if (!res.ok || !data.success || cancelled) return;
 
@@ -407,6 +414,7 @@ export default function RiderDashboardClient() {
         setIncomingDispatch((prev) => {
           if (prev?.id === mapped.id) return prev;
           setDispatchTimer(30);
+          playNotification();
           return mapped;
         });
       } catch (error) {
@@ -420,7 +428,7 @@ export default function RiderDashboardClient() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [dutyStatus, activeDelivery]);
+  }, [dutyStatus, activeDelivery, playNotification]);
 
   useEffect(() => {
     if (!showDispatch) return;
@@ -489,11 +497,42 @@ export default function RiderDashboardClient() {
     };
   }, [activeDelivery?.id]);
 
-  const toggleDuty = () => {
+  const toggleDuty = async () => {
+    if (dutyStatus === 'DELIVERING') {
+      toast.error('Finish your current delivery before going offline');
+      return;
+    }
     const next = dutyStatus === 'OFFLINE' ? 'AVAILABLE' : 'OFFLINE';
+    const profileStatus = next === 'AVAILABLE' ? 'Online' : 'Offline';
+    const riderId = localStorage.getItem('fooddash_session_id') || '';
+
     setDutyStatus(next);
-    toast.success(next === 'AVAILABLE' ? 'You are now online — ready for dispatch' : 'You are now offline');
     if (next === 'OFFLINE') setIncomingDispatch(null);
+
+    try {
+      if (riderId) {
+        await fetch('/api/rider/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            riderId,
+            name: profile.name,
+            phone: profile.phone,
+            vehicle: profile.vehicle,
+            licensePlate: profile.licensePlate,
+            profileImage: profile.profileImage,
+            status: profileStatus,
+          }),
+        });
+      }
+      toast.success(
+        next === 'AVAILABLE'
+          ? 'You are now online — ready for dispatch'
+          : 'You are now offline — no new dispatches'
+      );
+    } catch {
+      toast.error('Could not sync online status');
+    }
   };
 
   const acceptDispatch = async () => {
@@ -505,7 +544,7 @@ export default function RiderDashboardClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'OUT_FOR_DELIVERY',
-          riderId: RIDER_ID,
+          riderId: localStorage.getItem('fooddash_session_id') || 'unknown',
           riderName: profile.name.trim() || 'Rider',
           riderCoords: incomingDispatch.restaurantCoords,
         }),
@@ -514,10 +553,12 @@ export default function RiderDashboardClient() {
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to accept');
 
       setActiveDelivery(incomingDispatch);
-      setRiderPos(incomingDispatch.restaurantCoords);
+      setActiveDeliveryStatus('ACCEPTED');
+      setRiderPos(MOCK_COORDS.rider);
       setIncomingDispatch(null);
       setDutyStatus('DELIVERING');
       toast.success(`Dispatch accepted — heading to ${incomingDispatch.restaurant}`);
+      void loadRoutes();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to accept dispatch');
     } finally {
@@ -542,6 +583,12 @@ export default function RiderDashboardClient() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to update status');
 
+      setActiveDeliveryStatus('PICKED_UP');
+      setRiderPos(
+        activeDelivery.restaurantCoords?.lat
+          ? activeDelivery.restaurantCoords
+          : MOCK_COORDS.restaurant
+      );
       toast.success('Order picked up — heading to customer');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to mark picked up');
@@ -551,19 +598,32 @@ export default function RiderDashboardClient() {
   const markDelivered = async () => {
     if (!activeDelivery) return;
     try {
+      const baseRiderFee = activeDelivery.estimatedEarnings || 0;
+      const tipAmount = activeDelivery.estimatedTip || 0;
+      const distanceKm = parseFloat(activeDelivery.dropDistance) || 0;
+      const durationMins = 25; // Average static duration for now
+
       const res = await fetch(`/api/orders/${activeDelivery.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'DELIVERED' }),
+        body: JSON.stringify({
+          status: 'DELIVERED',
+          baseRiderFee,
+          tipAmount,
+          distanceKm,
+          durationMins,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to update status');
 
       setActiveDelivery(null);
+      setActiveDeliveryStatus(null);
       setRiderPos(INITIAL_RIDER_POS);
       setDutyStatus('AVAILABLE');
       setDispatchTimer(30);
       toast.success('Delivery completed! Great job 🎉');
+      void loadRoutes();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to mark delivered');
     }
@@ -592,13 +652,18 @@ export default function RiderDashboardClient() {
       toast.error('Name is required');
       return;
     }
+    const sessionId = localStorage.getItem('fooddash_session_id');
+    if (!sessionId) {
+      toast.error('Please sign in again');
+      return;
+    }
     setProfileSaving(true);
     try {
       const res = await fetch('/api/rider/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          riderId: RIDER_ID,
+          riderId: sessionId,
           name: profile.name.trim(),
           phone: profile.phone.trim(),
           vehicle: profile.vehicle.trim(),
@@ -609,6 +674,11 @@ export default function RiderDashboardClient() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Save failed');
       toast.success('Rider profile saved');
+      window.dispatchEvent(
+        new CustomEvent('fooddash:rider-profile-updated', {
+          detail: { profileImage: profile.profileImage, name: profile.name.trim() },
+        })
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to save profile');
     } finally {
@@ -620,16 +690,20 @@ export default function RiderDashboardClient() {
     toast.success(`Navigating to ${stop.location} — ${stop.address}`);
   };
 
-  const todayEarnings = COMPLETED_TRIPS.reduce((s, t) => s + t.earnings + t.tip, 0);
-  const todayTrips = COMPLETED_TRIPS.length;
-  const todayDistance = COMPLETED_TRIPS.reduce((s, t) => s + parseFloat(t.distance), 0).toFixed(1);
-  const todayTips = COMPLETED_TRIPS.reduce((s, t) => s + t.tip, 0);
+  const todayEarnings = dashboardData?.todayStats?.todayEarnings || 0;
+  const todayTrips = dashboardData?.todayStats?.todayTrips || 0;
+  const todayDistance = dashboardData?.todayStats?.todayDistance || 0;
+  const todayTips = dashboardData?.todayStats?.todayTips || 0;
+  const weeklyTotal =
+    dashboardData?.weeklyChartData?.reduce(
+      (s: number, d: { earnings: number }) => s + (Number(d.earnings) || 0),
+      0
+    ) || 0;
 
-  const completedStops = TODAY_ROUTE_PLAN.filter((s) => s.status === 'COMPLETED').length;
-  const currentStop = TODAY_ROUTE_PLAN.find((s) => s.status === 'CURRENT');
-  const upcomingStops = TODAY_ROUTE_PLAN.filter((s) => s.status === 'UPCOMING').length;
-  const parcelStops = TODAY_ROUTE_PLAN.filter((s) => s.type !== 'FOOD').length;
-  const foodStops = TODAY_ROUTE_PLAN.filter((s) => s.type === 'FOOD').length;
+  const completedStops = routeStops.filter((s) => s.status === 'COMPLETED').length;
+  const currentStop = routeStops.find((s) => s.status === 'CURRENT');
+  const upcomingStops = routeStops.filter((s) => s.status === 'UPCOMING').length;
+  const foodStops = routeStops.filter((s) => s.type === 'FOOD').length;
 
   const dutyLabel =
     dutyStatus === 'OFFLINE' ? 'Go Online' : dutyStatus === 'AVAILABLE' ? 'Online' : 'Delivering';
@@ -716,9 +790,21 @@ export default function RiderDashboardClient() {
           {/* Header */}
           <header className="sticky top-0 z-20 flex shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-8 pt-safe">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-slate-50 ring-1 ring-slate-200 lg:hidden">
-                <AppLogo size={28} />
-              </div>
+              <span className="relative flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-50 ring-1 ring-slate-200">
+                {profile.profileImage?.trim() ? (
+                  <AppImage
+                    key={profile.profileImage}
+                    src={profile.profileImage}
+                    alt={profile.name || 'Rider'}
+                    width={40}
+                    height={40}
+                    className="h-10 w-10 object-cover"
+                    unoptimized
+                  />
+                ) : (
+                  <AppLogo size={28} />
+                )}
+              </span>
               <div>
                 <p className="text-sm font-semibold leading-tight tracking-tight text-slate-900 sm:text-[15px]">
                   {profile.name.trim() || 'Rider'}
@@ -731,14 +817,36 @@ export default function RiderDashboardClient() {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
+              <NotificationBell
                 className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-800"
-                aria-label="Notifications"
-              >
-                <Bell className="h-4 w-4" />
-                <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-danger ring-2 ring-white" />
-              </button>
+                iconClassName="h-4 w-4"
+                showDot={Boolean(showDispatch && incomingDispatch) || Boolean(activeDelivery)}
+                items={
+                  [
+                    ...(showDispatch && incomingDispatch
+                      ? [
+                          {
+                            id: incomingDispatch.id,
+                            title: 'New dispatch request',
+                            body: `${incomingDispatch.restaurant} · ${incomingDispatch.orderNumber}`,
+                            onClick: () => setActiveTab('home'),
+                          } satisfies BellNotificationItem,
+                        ]
+                      : []),
+                    ...(activeDelivery
+                      ? [
+                          {
+                            id: `active-${activeDelivery.id}`,
+                            title: 'Active delivery',
+                            body: `${activeDelivery.restaurant} → customer`,
+                            onClick: () => setActiveTab('home'),
+                          } satisfies BellNotificationItem,
+                        ]
+                      : []),
+                  ] as BellNotificationItem[]
+                }
+                emptyLabel="No dispatch alerts"
+              />
 
               <button
                 type="button"
@@ -825,9 +933,9 @@ export default function RiderDashboardClient() {
 
                             <div className="grid grid-cols-3 gap-2 sm:gap-3">
                               {[
-                                { label: 'Base Pay', value: `$${incomingDispatch.estimatedEarnings.toFixed(2)}`, className: 'text-slate-900' },
-                                { label: 'Est. Tip', value: `+$${incomingDispatch.estimatedTip.toFixed(2)}`, className: 'text-success' },
-                                { label: 'Total Est.', value: `$${(incomingDispatch.estimatedEarnings + incomingDispatch.estimatedTip).toFixed(2)}`, className: 'text-rider' },
+                                { label: 'Base Pay', value: formatKyat(incomingDispatch.estimatedEarnings), className: 'text-slate-900' },
+                                { label: 'Est. Tip', value: `+${formatKyat(incomingDispatch.estimatedTip)}`, className: 'text-success' },
+                                { label: 'Total Est.', value: formatKyat(incomingDispatch.estimatedEarnings + incomingDispatch.estimatedTip), className: 'text-rider' },
                               ].map((cell) => (
                                 <div key={cell.label} className="rounded-xl border border-slate-100 bg-slate-50 py-3 text-center">
                                   <p className="text-[10px] font-medium text-slate-400">{cell.label}</p>
@@ -874,51 +982,66 @@ export default function RiderDashboardClient() {
                           </div>
 
                           <div className="space-y-4 p-4 sm:p-5">
-                            <div className="relative h-52 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner sm:h-64 lg:h-72">
-                              <RiderLiveMap
-                                pickupCoords={
-                                  activeDelivery.restaurantCoords?.lat
-                                    ? activeDelivery.restaurantCoords
-                                    : { lat: 16.8409, lng: 96.1735 }
-                                }
-                                dropoffCoords={
-                                  activeDelivery.customerCoords?.lat
-                                    ? activeDelivery.customerCoords
-                                    : { lat: 16.8564, lng: 96.1821 }
-                                }
-                                riderCoords={riderPos}
-                              />
-                            </div>
+                            {activeDeliveryStatus !== 'DELIVERED' &&
+                              (activeDeliveryStatus === 'ACCEPTED' ||
+                                activeDeliveryStatus === 'PICKED_UP') && (
+                              <>
+                                <div className="relative h-52 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner sm:h-64 lg:h-72">
+                                  <RiderRouteMap
+                                    riderCoords={
+                                      riderPos?.lat ? riderPos : MOCK_COORDS.rider
+                                    }
+                                    restaurantCoords={
+                                      activeDelivery.restaurantCoords?.lat
+                                        ? activeDelivery.restaurantCoords
+                                        : MOCK_COORDS.restaurant
+                                    }
+                                    customerCoords={
+                                      activeDelivery.customerCoords?.lat
+                                        ? activeDelivery.customerCoords
+                                        : MOCK_COORDS.customer
+                                    }
+                                    deliveryStatus={activeDeliveryStatus}
+                                  />
+                                </div>
 
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              <ContactRow
-                                label="Pickup from"
-                                title={activeDelivery.restaurant}
-                                subtitle={activeDelivery.restaurantAddr}
-                              />
-                              <ContactRow
-                                label="Deliver to"
-                                title="Customer"
-                                subtitle={activeDelivery.customerAddr}
-                              />
-                            </div>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  <ContactRow
+                                    label="Pickup from"
+                                    title={activeDelivery.restaurant}
+                                    subtitle={activeDelivery.restaurantAddr}
+                                  />
+                                  <ContactRow
+                                    label="Deliver to"
+                                    title={activeDelivery.customerName || 'Customer'}
+                                    subtitle={activeDelivery.customerAddr}
+                                    onMessage={
+                                      activeDelivery.customerId
+                                        ? () => setChatOpen(true)
+                                        : undefined
+                                    }
+                                  />
+                                </div>
 
-                            <div className="flex gap-3">
-                              <button
-                                type="button"
-                                onClick={markPickedUp}
-                                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-warning/25 bg-warning/10 py-3 text-sm font-semibold text-warning transition-all hover:bg-warning/15 active:scale-[0.98]"
-                              >
-                                <CheckCircle className="h-4 w-4" /> Picked Up
-                              </button>
-                              <button
-                                type="button"
-                                onClick={markDelivered}
-                                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-success/25 bg-success/10 py-3 text-sm font-semibold text-success transition-all hover:bg-success/15 active:scale-[0.98]"
-                              >
-                                <CheckCircle className="h-4 w-4" /> Delivered
-                              </button>
-                            </div>
+                                {activeDeliveryStatus === 'ACCEPTED' ? (
+                                  <button
+                                    type="button"
+                                    onClick={markPickedUp}
+                                    className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white transition hover:bg-green-700"
+                                  >
+                                    Mark as Picked Up
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={markDelivered}
+                                    className="w-full rounded-xl bg-customer py-3 font-semibold text-white transition hover:bg-customer/90"
+                                  >
+                                    Complete Delivery
+                                  </button>
+                                )}
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -938,7 +1061,7 @@ export default function RiderDashboardClient() {
                     }`}>
                       <MetricCard
                         label="Total Earnings"
-                        value={`$${todayEarnings.toFixed(2)}`}
+                        value={formatKyat(todayEarnings)}
                         sub="Base + tips"
                         icon={Wallet}
                         accent="bg-success/10 text-success"
@@ -952,14 +1075,14 @@ export default function RiderDashboardClient() {
                       />
                       <MetricCard
                         label="Distance"
-                        value={`${todayDistance} km`}
+                        value={`${Number(todayDistance).toFixed(1)} km`}
                         sub="Total ridden"
                         icon={Route}
                         accent="bg-warning/10 text-warning"
                       />
                       <MetricCard
                         label="Tips Earned"
-                        value={`$${todayTips.toFixed(2)}`}
+                        value={formatKyat(todayTips)}
                         sub="Customer tips"
                         icon={Star}
                         accent="bg-amber-400/15 text-amber-500"
@@ -967,27 +1090,25 @@ export default function RiderDashboardClient() {
                     </div>
                   </div>
                 </div>
+
+                <PredictiveHeatmap />
               </div>
             )}
 
-            {/* ROUTES — C2C + Food daily plan */}
+            {/* ROUTES — Food daily plan */}
             {activeTab === 'routes' && (
               <div className="mx-auto max-w-3xl space-y-5 animate-fade-in lg:max-w-none">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <SectionLabel>Today&apos;s Optimized Route</SectionLabel>
                     <p className="mt-1 text-sm font-medium text-slate-500">
-                      Auto-planned by township · Food + C2C parcels
+                      Auto-planned by township · Food deliveries
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-600">
                       <UtensilsCrossed className="h-3 w-3" />
                       {foodStops} Food
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700">
-                      <Package className="h-3 w-3" />
-                      {parcelStops} Parcel
                     </span>
                   </div>
                 </div>
@@ -1041,7 +1162,7 @@ export default function RiderDashboardClient() {
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Route overview</p>
                         <p className="text-xs font-semibold text-slate-800">
-                          {completedStops}/{TODAY_ROUTE_PLAN.length} stops done · {upcomingStops} left
+                          {completedStops}/{routeStops.length} stops done · {upcomingStops} left
                         </p>
                       </div>
                     </div>
@@ -1089,15 +1210,25 @@ export default function RiderDashboardClient() {
                   <div className="mb-5 flex items-center justify-between">
                     <SectionLabel>Stop sequence</SectionLabel>
                     <span className="text-[11px] font-medium text-slate-400 font-tabular">
-                      {TODAY_ROUTE_PLAN.length} stops today
+                      {routeStops.length} stops today
                     </span>
                   </div>
 
+                  {routeStops.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center">
+                      <Route className="mx-auto h-8 w-8 text-slate-300" />
+                      <p className="mt-3 text-sm font-semibold text-slate-600">No stops yet today</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Accept a dispatch and your pickup / drop-off stops will appear here.
+                      </p>
+                    </div>
+                  ) : null}
+
                   <ol className="relative space-y-0">
-                    {TODAY_ROUTE_PLAN.map((stop, index) => {
-                      const meta = ROUTE_TYPE_META[stop.type];
+                    {routeStops.map((stop, index) => {
+                      const meta = ROUTE_TYPE_META[stop.type] || ROUTE_TYPE_META.FOOD;
                       const TypeIcon = meta.icon;
-                      const isLast = index === TODAY_ROUTE_PLAN.length - 1;
+                      const isLast = index === routeStops.length - 1;
                       const isCompleted = stop.status === 'COMPLETED';
                       const isCurrent = stop.status === 'CURRENT';
 
@@ -1206,16 +1337,24 @@ export default function RiderDashboardClient() {
                 <SectionLabel>Earnings Overview</SectionLabel>
 
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <MetricCard label="Today" value={`$${todayEarnings.toFixed(2)}`} icon={DollarSign} accent="bg-success/10 text-success" />
-                  <MetricCard label="This Week" value="$284.60" icon={TrendingUp} accent="bg-rider/10 text-rider" />
-                  <MetricCard label="Tips Today" value={`$${todayTips.toFixed(2)}`} icon={Star} accent="bg-amber-400/15 text-amber-500" />
+                  <MetricCard label="Today" value={formatKyat(Number(todayEarnings))} icon={DollarSign} accent="bg-success/10 text-success" />
+                  <MetricCard label="This Week" value={formatKyat(Number(weeklyTotal))} icon={TrendingUp} accent="bg-rider/10 text-rider" />
+                  <MetricCard label="Tips Today" value={formatKyat(Number(todayTips))} icon={Star} accent="bg-amber-400/15 text-amber-500" />
                   <MetricCard label="Trips Today" value={String(todayTrips)} icon={Bike} accent="bg-warning/10 text-warning" />
                 </div>
 
                 <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
                   <SectionLabel>Weekly Chart</SectionLabel>
                   <div className="mt-4">
-                    <EarningsChart />
+                    <EarningsChart
+                      data={dashboardData?.weeklyChartData || []}
+                      total={
+                        dashboardData?.weeklyChartData?.reduce(
+                          (s: number, d: any) => s + d.earnings,
+                          0
+                        ) || 0
+                      }
+                    />
                   </div>
                 </div>
               </div>
@@ -1228,45 +1367,85 @@ export default function RiderDashboardClient() {
                   <SectionLabel>Recent Trips</SectionLabel>
                   <span className="text-[11px] font-medium text-slate-400 font-tabular">{todayTrips} trips today</span>
                 </div>
-                <div className="grid gap-2.5 lg:grid-cols-2">
-                  {COMPLETED_TRIPS.map((trip) => (
-                    <div
-                      key={trip.id}
-                      className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all duration-200 hover:border-slate-300 hover:shadow-md"
-                    >
-                      <div className="mb-2.5 flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-900 font-tabular">{trip.orderNumber}</p>
-                          <p className="mt-0.5 truncate text-xs text-slate-500">
-                            {trip.restaurant} → {trip.customer}
-                          </p>
+                {(dashboardData?.recentTrips || []).length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200/80 bg-white px-6 py-12 text-center shadow-sm">
+                    <p className="text-sm font-semibold text-slate-900">No completed trips yet</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Delivered orders assigned to you will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-2.5 lg:grid-cols-2">
+                    {(dashboardData?.recentTrips || []).map((trip: any) => {
+                      const tip = Number(trip.tipAmount) || 0;
+                      const base =
+                        trip.baseRiderFee != null
+                          ? Number(trip.baseRiderFee) || 0
+                          : Number(trip.totals?.deliveryFee) || 0;
+                      const earnings = base + tip;
+                      const distanceKm = Number(trip.distanceKm) || 0;
+                      const durationMins = Number(trip.durationMins) || 0;
+                      const completedLabel = trip.completedAt
+                        ? new Date(trip.completedAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : trip.createdAt
+                          ? new Date(trip.createdAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : '—';
+
+                      return (
+                        <div
+                          key={trip._id}
+                          className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all duration-200 hover:border-slate-300 hover:shadow-md"
+                        >
+                          <div className="mb-2.5 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 font-tabular">
+                                {trip.orderNumber || '—'}
+                              </p>
+                              <p className="mt-0.5 truncate text-xs text-slate-500">
+                                {trip.restaurantName || 'Restaurant'} →{' '}
+                                {trip.customerName || 'Customer'}
+                              </p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-sm font-bold text-success font-tabular">
+                                {formatKyat(earnings)}
+                              </p>
+                              {tip > 0 && (
+                                <p className="text-[11px] text-amber-500 font-tabular">
+                                  +{formatKyat(tip)} tip
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              <span className="font-tabular">
+                                {durationMins > 0 ? `${durationMins} min` : '—'}
+                              </span>
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Navigation className="h-3 w-3" />
+                              <span className="font-tabular">
+                                {distanceKm > 0 ? `${distanceKm.toFixed(1)} km` : '—'}
+                              </span>
+                            </span>
+                            <span className="ml-auto flex items-center gap-1 text-success">
+                              <CheckCircle className="h-3 w-3" />
+                              <span className="font-tabular">{completedLabel}</span>
+                            </span>
+                          </div>
                         </div>
-                        <div className="shrink-0 text-right">
-                          <p className="text-sm font-bold text-success font-tabular">
-                            ${(trip.earnings + trip.tip).toFixed(2)}
-                          </p>
-                          {trip.tip > 0 && (
-                            <p className="text-[11px] text-amber-500 font-tabular">+${trip.tip.toFixed(2)} tip</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3 text-[11px] text-slate-400">
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          <span className="font-tabular">{trip.duration}</span>
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Navigation className="h-3 w-3" />
-                          <span className="font-tabular">{trip.distance}</span>
-                        </span>
-                        <span className="ml-auto flex items-center gap-1 text-success">
-                          <CheckCircle className="h-3 w-3" />
-                          <span className="font-tabular">{trip.completedAt}</span>
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1388,6 +1567,38 @@ export default function RiderDashboardClient() {
                     </div>
                   </form>
                 )}
+
+                <div className="mt-5 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+                  <div className="mb-1 flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4 text-rider" />
+                    <h3 className="text-sm font-bold text-slate-900">Support</h3>
+                  </div>
+                  <p className="mb-4 text-xs text-slate-500">
+                    Message FoodDash Support about dispatch issues, payouts, or account help.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSupportOpen(true)}
+                    className="btn-primary w-full justify-center py-3"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    Contact Support
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+                  <div className="mb-1 flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-rider" />
+                    <h3 className="text-sm font-bold text-slate-900">Security</h3>
+                  </div>
+                  <p className="mb-4 text-xs text-slate-500">
+                    Keep your rider account secure with a strong password.
+                  </p>
+                  <Link href="/change-password" className="btn-secondary w-full justify-center py-3">
+                    <Lock className="h-4 w-4" />
+                    Change Password
+                  </Link>
+                </div>
               </div>
             )}
           </main>
@@ -1400,6 +1611,35 @@ export default function RiderDashboardClient() {
           {renderNavButtons('bottom')}
         </div>
       </nav>
+
+      {activeDelivery && activeDelivery.customerId && sessionId && (
+        <ChatWidget
+          currentUserId={sessionId}
+          currentUserRole="RIDER"
+          targetUserId={activeDelivery.customerId}
+          targetUserRole="CUSTOMER"
+          targetName={activeDelivery.customerName || 'Customer'}
+          orderId={activeDelivery.id}
+          open={chatOpen}
+          onOpenChange={setChatOpen}
+          quickReplies={[...RIDER_TO_CUSTOMER_QUICK_REPLIES]}
+          accentClassName="bg-rider"
+        />
+      )}
+
+      {sessionId && (
+        <ChatWidget
+          currentUserId={sessionId}
+          currentUserRole="RIDER"
+          targetUserId={SUPPORT_ADMIN_ID}
+          targetUserRole={SUPPORT_ADMIN_ROLE}
+          targetName={SUPPORT_ADMIN_NAME}
+          open={supportOpen}
+          onOpenChange={setSupportOpen}
+          showLauncher={false}
+          accentClassName="bg-rider"
+        />
+      )}
     </div>
   );
 }

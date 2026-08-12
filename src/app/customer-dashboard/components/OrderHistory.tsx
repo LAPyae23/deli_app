@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { RotateCcw, Star, ChevronDown, ChevronUp, Receipt } from 'lucide-react';
+import { RotateCcw, Star, ChevronDown, ChevronUp, Receipt, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatMMK } from '@/lib/currency';
 
 type OrderItem = {
   name?: string;
@@ -18,6 +19,8 @@ type DbOrder = {
   status?: string;
   createdAt?: string;
   rating?: number | null;
+  review?: string | null;
+  restaurantRating?: number | null;
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -56,10 +59,33 @@ function formatStatus(status?: string) {
   return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
-export default function OrderHistory() {
+function StarDisplay({ value }: { value: number }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {Array.from({ length: 5 }).map((_, si) => (
+        <Star
+          key={`star-display-${si}`}
+          className={`h-3.5 w-3.5 ${
+            si < value ? 'fill-warning text-warning' : 'fill-border text-border'
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface OrderHistoryProps {
+  onRateRestaurant?: (restaurantName: string) => void;
+}
+
+export default function OrderHistory({ onRateRestaurant }: OrderHistoryProps) {
   const [orders, setOrders] = useState<DbOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
+  const [reviewingOrderId, setReviewingOrderId] = useState<string | null>(null);
+  const [rating, setRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +93,18 @@ export default function OrderHistory() {
     async function fetchOrders() {
       setIsLoading(true);
       try {
-        const res = await fetch('/api/orders');
+        const customerId = localStorage.getItem('fooddash_session_id');
+        if (!customerId) {
+          if (!cancelled) {
+            setOrders([]);
+            toast.error('Please sign in to view your order history');
+          }
+          return;
+        }
+
+        const res = await fetch(
+          `/api/orders?customerId=${encodeURIComponent(customerId)}`
+        );
         const data = await res.json();
         if (!res.ok || !data.success) {
           throw new Error(data.message || 'Failed to load orders');
@@ -96,6 +133,52 @@ export default function OrderHistory() {
 
   const handleReorder = (orderId: string, restaurant: string) => {
     toast.success(`Reordering from ${restaurant}!`);
+  };
+
+  const openReviewModal = (orderId: string) => {
+    setReviewingOrderId(orderId);
+    setRating(5);
+    setReviewText('');
+  };
+
+  const closeReviewModal = () => {
+    setReviewingOrderId(null);
+    setRating(5);
+    setReviewText('');
+  };
+
+  const submitReview = async () => {
+    if (!reviewingOrderId) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`/api/customer/orders/${reviewingOrderId}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating, review: reviewText }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to submit review');
+      }
+
+      setOrders((prev) =>
+        prev.map((order) =>
+          order._id === reviewingOrderId
+            ? {
+                ...order,
+                rating: data.order?.rating ?? rating,
+                review: data.order?.review ?? reviewText,
+              }
+            : order
+        )
+      );
+      toast.success('Thanks for your review!');
+      closeReviewModal();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to submit review');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isLoading) {
@@ -145,6 +228,7 @@ export default function OrderHistory() {
           const restaurant = order.restaurantName || 'Restaurant';
           const itemsLabel = formatItems(order.items);
           const date = formatDate(order.createdAt);
+          const orderRating = order.rating ?? null;
 
           return (
             <div key={order._id} className="rounded-xl border border-border bg-card p-4 card-shadow">
@@ -158,20 +242,41 @@ export default function OrderHistory() {
                 </span>
               </div>
               <p className="mb-3 line-clamp-2 text-xs text-muted-foreground">{itemsLabel}</p>
-              <div className="flex items-center justify-between">
+
+              {status === 'DELIVERED' && orderRating != null && (
+                <div className="mb-3 rounded-lg bg-muted/60 px-3 py-2">
+                  <StarDisplay value={orderRating} />
+                  {order.review && (
+                    <p className="mt-1 text-xs text-muted-foreground">{order.review}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-bold text-foreground font-tabular">${total.toFixed(2)}</span>
+                  <span className="text-sm font-bold text-foreground font-tabular">{formatMMK(total)}</span>
                   <span className="text-xs text-muted-foreground">{date}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {status === 'DELIVERED' && (
-                    <button
-                      type="button"
-                      onClick={() => handleReorder(order._id, restaurant)}
-                      className="flex items-center gap-1 rounded-lg bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-customer transition-colors hover:bg-orange-100 active:scale-95"
-                    >
-                      <RotateCcw className="h-3 w-3" /> Reorder
-                    </button>
+                    <>
+                      {orderRating == null && (
+                        <button
+                          type="button"
+                          onClick={() => openReviewModal(order._id)}
+                          className="flex items-center gap-1 rounded-lg bg-muted px-2.5 py-1.5 text-xs font-semibold text-customer transition-colors hover:bg-border active:scale-95"
+                        >
+                          <Star className="h-3 w-3" /> Leave a Review
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleReorder(order._id, restaurant)}
+                        className="flex items-center gap-1 rounded-lg bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-customer transition-colors hover:bg-orange-100 active:scale-95"
+                      >
+                        <RotateCcw className="h-3 w-3" /> Reorder
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"
@@ -225,7 +330,7 @@ export default function OrderHistory() {
                 const restaurant = order.restaurantName || 'Restaurant';
                 const itemsLabel = formatItems(order.items);
                 const date = formatDate(order.createdAt);
-                const rating = order.rating ?? null;
+                const orderRating = order.rating ?? null;
 
                 return (
                   <tr key={order._id} className="group transition-colors hover:bg-muted/40">
@@ -239,7 +344,7 @@ export default function OrderHistory() {
                       {itemsLabel}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-sm font-semibold text-foreground font-tabular">
-                      ${total.toFixed(2)}
+                      {formatMMK(total)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3.5">
                       <span className={`status-badge ${STATUS_STYLES[status] || 'bg-muted text-muted-foreground'}`}>
@@ -247,21 +352,23 @@ export default function OrderHistory() {
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-sm text-muted-foreground">{date}</td>
-                    <td className="whitespace-nowrap px-4 py-3.5">
-                      {rating ? (
-                        <div className="flex items-center gap-1">
-                          {Array.from({ length: 5 }).map((_, si) => (
-                            <Star
-                              key={`star-${order._id}-${si}`}
-                              className={`h-3.5 w-3.5 ${
-                                si < rating ? 'fill-warning text-warning' : 'fill-border text-border'
-                              }`}
-                            />
-                          ))}
+                    <td className="px-4 py-3.5">
+                      {orderRating != null ? (
+                        <div className="space-y-1">
+                          <StarDisplay value={orderRating} />
+                          {order.review && (
+                            <p className="max-w-[180px] rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground line-clamp-2">
+                              {order.review}
+                            </p>
+                          )}
                         </div>
                       ) : status === 'DELIVERED' ? (
-                        <button type="button" className="text-xs font-semibold text-customer hover:underline">
-                          Rate order
+                        <button
+                          type="button"
+                          onClick={() => openReviewModal(order._id)}
+                          className="text-xs font-semibold text-customer hover:underline"
+                        >
+                          Leave a Review
                         </button>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
@@ -312,6 +419,78 @@ export default function OrderHistory() {
           </div>
         )}
       </div>
+
+      {/* Review modal */}
+      {reviewingOrderId && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl animate-fade-in">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Leave a Review</h3>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  How was your order experience?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeReviewModal}
+                disabled={isSubmitting}
+                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mb-4 flex items-center justify-center gap-2">
+              {Array.from({ length: 5 }).map((_, si) => (
+                <button
+                  key={`rate-star-${si}`}
+                  type="button"
+                  onClick={() => setRating(si + 1)}
+                  disabled={isSubmitting}
+                  className="rounded-lg p-1 transition-transform hover:scale-110 active:scale-95"
+                  aria-label={`Rate ${si + 1} stars`}
+                >
+                  <Star
+                    className={`h-8 w-8 ${
+                      si < rating ? 'fill-warning text-warning' : 'fill-border text-border'
+                    }`}
+                  />
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={reviewText}
+              onChange={(e) => setReviewText(e.target.value)}
+              disabled={isSubmitting}
+              rows={4}
+              placeholder="Share your thoughts (optional)..."
+              className="input-field mb-4 w-full resize-none py-2.5 text-sm"
+            />
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeReviewModal}
+                disabled={isSubmitting}
+                className="rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitReview}
+                disabled={isSubmitting}
+                className="rounded-xl bg-customer px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {isSubmitting ? 'Submitting…' : 'Submit Review'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

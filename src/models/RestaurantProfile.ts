@@ -15,6 +15,18 @@ const RestaurantProfileSchema = new mongoose.Schema(
     },
     openingTime: { type: String, default: '09:00' },
     closingTime: { type: String, default: '22:00' },
+    storeStatus: {
+      type: String,
+      enum: ['OPEN', 'BUSY', 'CLOSED'],
+      default: 'OPEN',
+    },
+    township: { type: String, default: '', index: true },
+    approvalStatus: {
+      type: String,
+      enum: ['PENDING', 'APPROVED', 'REJECTED'],
+      default: 'APPROVED',
+      index: true,
+    },
   },
   { timestamps: true }
 );

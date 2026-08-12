@@ -41,7 +41,12 @@ export type Restaurant = {
   imageAlt: string;
   tags: string[];
   isOpen: boolean;
+  storeStatus?: 'OPEN' | 'BUSY' | 'CLOSED';
   discount: string | null;
+  lat?: number;
+  lng?: number;
+  location?: { lat?: number; lng?: number };
+  distanceKm?: number;
 };
 
 export type MenuItem = {
@@ -58,23 +63,6 @@ export type MenuItem = {
   popular?: boolean;
   restaurantId?: string;
   isAvailable?: boolean;
+  stockQuantity?: number;
   addons?: { name: string; extraPrice: number }[];
-};
-
-export type ParcelStatus = 'DRAFT' | 'SCHEDULED' | 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED';
-export type ParcelSize = 'Envelope' | 'Small' | 'Medium';
-
-export type CustomerParcel = {
-  id: string;
-  ref: string;
-  pickupLocation: string;
-  pickupAddress: string;
-  dropoffLocation: string;
-  dropoffAddress: string;
-  recipientName: string;
-  status: ParcelStatus;
-  timeWindow: string;
-  fee: number;
-  size: ParcelSize;
-  notes?: string;
 };

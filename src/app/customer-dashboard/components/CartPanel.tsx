@@ -14,29 +14,24 @@ import {
   ShoppingCart,
   Briefcase,
   MapPin,
+  Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppImage from '@/components/ui/AppImage';
+import { formatMMK } from '@/lib/currency';
 import OrderReceiptModal, { type PaymentMethod } from './OrderReceiptModal';
 import { placeOrder } from '../services/orderService';
 import type { CartItem, DeliveryAddressInfo, OrderTotals } from '../types';
 
 /** Display USD menu prices as Myanmar Kyat */
-const USD_TO_MMK = 2100;
-
-export function toMMK(usd: number) {
-  return Math.round(usd * USD_TO_MMK);
-}
-
-export function formatMMK(usd: number) {
-  return `MMK ${toMMK(usd).toLocaleString('en-US')}`;
-}
+export { toMMK, formatMMK } from '@/lib/currency';
 
 interface CartPanelProps {
   items: CartItem[];
   updateQty: (id: string, delta: number) => void;
   removeItem: (id: string) => void;
   removePurchasedItems: (ids: string[]) => void;
+  addToCart?: (item: Omit<CartItem, 'quantity'> & { quantity: number }) => void;
   restaurantName?: string;
   deliveryAddress: DeliveryAddressInfo;
   savedAddresses?: DeliveryAddressInfo[];
@@ -47,11 +42,26 @@ interface CartPanelProps {
   onOrderSuccess?: (orderId: string) => void;
 }
 
+type BasketRec = {
+  id: string;
+  itemId?: string;
+  name: string;
+  category: string;
+  price: number;
+  unitPrice: number;
+  image?: string;
+  restaurantName?: string;
+  confidence?: number;
+  pairedWith?: string;
+  explanation?: string;
+};
+
 export default function CartPanel({
   items,
   updateQty,
   removeItem,
   removePurchasedItems,
+  addToCart,
   restaurantName,
   deliveryAddress,
   savedAddresses = [],
@@ -67,6 +77,9 @@ export default function CartPanel({
   const [isPlacing, setIsPlacing] = useState(false);
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
+  const [recommendations, setRecommendations] = useState<BasketRec[]>([]);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [openExplanationId, setOpenExplanationId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedItems((prev) => {
@@ -77,6 +90,80 @@ export default function CartPanel({
       return [...kept, ...added];
     });
   }, [items]);
+
+  // Market-basket recommendations from current cart items
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRecommendations() {
+      if (items.length === 0) {
+        setRecommendations([]);
+        return;
+      }
+
+      const cartNames = Array.from(
+        new Set(items.map((i) => i.name.trim()).filter(Boolean))
+      );
+      if (cartNames.length === 0) {
+        setRecommendations([]);
+        return;
+      }
+
+      setRecsLoading(true);
+      try {
+        const params = new URLSearchParams({
+          items: cartNames.slice(0, 8).join(','),
+          limit: '5',
+        });
+        const res = await fetch(`/api/recommendations?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+
+        const cartNameSet = new Set(cartNames.map((n) => n.toLowerCase()));
+        const cartIdSet = new Set(items.map((i) => i.id));
+        const next = (Array.isArray(data.recommendations) ? data.recommendations : [])
+          .filter(
+            (r: BasketRec) =>
+              r?.name &&
+              !cartNameSet.has(String(r.name).toLowerCase()) &&
+              !cartIdSet.has(String(r.id))
+          )
+          .slice(0, 5) as BasketRec[];
+
+        setRecommendations(next);
+      } catch (error) {
+        console.warn('Failed to load basket recommendations', error);
+        if (!cancelled) setRecommendations([]);
+      } finally {
+        if (!cancelled) setRecsLoading(false);
+      }
+    }
+
+    const timer = setTimeout(loadRecommendations, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [items]);
+
+  const handleAddSuggestion = (rec: BasketRec) => {
+    if (!addToCart) return;
+    const id = rec.id?.startsWith('rec-')
+      ? rec.id
+      : `rec-${rec.name.toLowerCase().replace(/\s+/g, '-')}`;
+
+    addToCart({
+      id,
+      name: rec.name,
+      options: rec.category || 'Suggested',
+      unitPrice: Number(rec.unitPrice ?? rec.price) || 0,
+      quantity: 1,
+      restaurantName: rec.restaurantName || restaurantName || items[0]?.restaurantName,
+      image: rec.image,
+      imageAlt: rec.name,
+    });
+    toast.success(`Added ${rec.name} to cart`);
+  };
 
   const selectedCartItems = useMemo(
     () => items.filter((i) => selectedItems.includes(i.id)),
@@ -222,7 +309,7 @@ export default function CartPanel({
                   <p className="mt-0.5 truncate text-sm font-semibold text-foreground">
                     {deliveryAddress.address}
                   </p>
-                  {savedAddresses.length > 1 && onDeliveryAddressChange && (
+                  {savedAddresses.length > 0 && onDeliveryAddressChange && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {savedAddresses.map((a) => {
                         const isActive =
@@ -403,6 +490,128 @@ export default function CartPanel({
                 );
               })}
             </div>
+
+            {/* Market basket — customers also bought */}
+            {(recsLoading || recommendations.length > 0) && (
+              <div className="flex-shrink-0 border-t border-border bg-white px-3 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-2">
+                  Customers who bought this also bought…
+                </p>
+                {recsLoading && recommendations.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-2">Finding pairings…</p>
+                ) : (
+                  <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+                    {recommendations.map((rec) => {
+                      const tipId = `${rec.itemId || rec.id}-${rec.name}`;
+                      const explanation =
+                        rec.explanation ||
+                        (rec.pairedWith
+                          ? `Based on your recent purchase of ${rec.pairedWith}${
+                              rec.confidence != null
+                                ? ` (Apriori Rule: ${Math.round(Number(rec.confidence) * 100)}% Confidence)`
+                                : ''
+                            }`
+                          : 'Suggested from market-basket association rules.');
+                      const tipOpen = openExplanationId === tipId;
+
+                      return (
+                      <div
+                        key={tipId}
+                        className="relative min-w-[9.5rem] max-w-[9.5rem] rounded-xl border border-border bg-muted/30 p-2 flex flex-col gap-1.5"
+                      >
+                        <div className="relative h-14 w-full overflow-hidden rounded-lg bg-muted">
+                          {rec.image ? (
+                            <AppImage
+                              src={rec.image}
+                              alt={rec.name}
+                              fill
+                              className="object-cover"
+                              sizes="96px"
+                              unoptimized
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center">
+                              <ShoppingCart className="h-5 w-5 text-border" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-start gap-1">
+                          <p className="min-w-0 flex-1 text-[11px] font-semibold text-foreground line-clamp-2 leading-snug">
+                            {rec.name}
+                          </p>
+                          <div className="relative flex-shrink-0">
+                            <button
+                              type="button"
+                              className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-customer/10 hover:text-customer focus:outline-none focus-visible:ring-2 focus-visible:ring-customer/40"
+                              aria-label={`Why ${rec.name}?`}
+                              aria-expanded={tipOpen}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenExplanationId((prev) =>
+                                  prev === tipId ? null : tipId
+                                );
+                              }}
+                              onMouseEnter={() => setOpenExplanationId(tipId)}
+                              onMouseLeave={() =>
+                                setOpenExplanationId((prev) =>
+                                  prev === tipId ? null : prev
+                                )
+                              }
+                              onFocus={() => setOpenExplanationId(tipId)}
+                              onBlur={() =>
+                                setOpenExplanationId((prev) =>
+                                  prev === tipId ? null : prev
+                                )
+                              }
+                            >
+                              <Info className="h-3.5 w-3.5" strokeWidth={2.25} />
+                            </button>
+                            {tipOpen && (
+                              <div
+                                role="tooltip"
+                                className="absolute bottom-full right-0 z-30 mb-1.5 w-48 rounded-lg border border-customer/40 bg-zinc-900 px-2.5 py-2 text-left shadow-lg shadow-black/25"
+                              >
+                                <p className="text-[9px] font-bold uppercase tracking-wide text-customer">
+                                  Why this?
+                                </p>
+                                <p className="mt-0.5 text-[10px] leading-snug text-white">
+                                  {explanation}
+                                </p>
+                                <span
+                                  className="absolute -bottom-1 right-2 h-2 w-2 rotate-45 border-b border-r border-customer/40 bg-zinc-900"
+                                  aria-hidden
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {rec.pairedWith
+                            ? `Often with ${rec.pairedWith}`
+                            : rec.category}
+                        </p>
+                        <div className="mt-auto flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-bold font-tabular text-customer">
+                            {formatMMK(Number(rec.unitPrice ?? rec.price) || 0)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddSuggestion(rec)}
+                            disabled={!addToCart}
+                            className="inline-flex items-center gap-0.5 rounded-md bg-customer px-1.5 py-1 text-[10px] font-bold text-white hover:opacity-90 disabled:opacity-40"
+                            aria-label={`Add ${rec.name}`}
+                          >
+                            <Plus className="h-3 w-3" />
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Sticky bottom bar */}
             <div className="relative flex-shrink-0">

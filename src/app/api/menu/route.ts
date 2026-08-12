@@ -3,10 +3,34 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import MenuItem from '@/models/MenuItem';
 
+export async function GET(request: Request) {
+  try {
+    await dbConnect();
+    const { searchParams } = new URL(request.url);
+    const restaurantId = searchParams.get('restaurantId');
+    const query = restaurantId ? { restaurantId } : {};
+    const items = await MenuItem.find(query).sort({ createdAt: -1 });
+    return NextResponse.json({ success: true, items });
+  } catch (error) {
+    console.error('Menu GET error:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to fetch menu items' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
+
+    if (!body.restaurantId) {
+      return NextResponse.json(
+        { success: false, message: 'restaurantId is required' },
+        { status: 400 }
+      );
+    }
 
     const addons = Array.isArray(body.addons)
       ? body.addons
@@ -34,7 +58,7 @@ export async function POST(request: Request) {
         : Number(prepRaw);
 
     const newItem = await MenuItem.create({
-      restaurantId: body.restaurantId || 'burger-bliss-id',
+      restaurantId: String(body.restaurantId),
       name: body.name,
       category: body.category,
       description: body.description,
@@ -58,19 +82,6 @@ export async function POST(request: Request) {
     console.error('Menu Creation Error:', error);
     return NextResponse.json(
       { success: false, message: 'Failed to add menu item' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function GET() {
-  try {
-    await dbConnect();
-    const items = await MenuItem.find({}).sort({ createdAt: -1 });
-    return NextResponse.json({ success: true, items });
-  } catch (error) {
-    return NextResponse.json(
-      { success: false, message: 'Failed to fetch menu items' },
       { status: 500 }
     );
   }

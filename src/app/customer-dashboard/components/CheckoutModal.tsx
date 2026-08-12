@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, CreditCard, Wallet, Banknote, ChevronRight, ShieldCheck, MapPin, Clock } from 'lucide-react';
+import { formatMMK } from '@/lib/currency';
 import OrderReceiptModal from './OrderReceiptModal';
 import AddressPickerModal, { type PickedAddress } from './AddressPickerModal';
 import type { CartItem, DeliveryAddressInfo } from '../types';
@@ -22,11 +23,12 @@ interface CheckoutModalProps {
   clearCart: () => void;
   deliveryAddress: DeliveryAddressInfo;
   onDeliveryAddressChange: (address: DeliveryAddressInfo) => void;
+  savedAddresses?: DeliveryAddressInfo[];
 }
 
 const PAYMENT_METHODS = [
   { id: 'card', label: 'Credit / Debit Card', sub: 'Visa •••• 4242', icon: CreditCard },
-  { id: 'wallet', label: 'FoodDash Wallet', sub: 'Balance: $24.50', icon: Wallet },
+  { id: 'wallet', label: 'FoodDash Wallet', sub: `Balance: ${formatMMK(24.5)}`, icon: Wallet },
   { id: 'cash', label: 'Cash on Delivery', sub: 'Pay when delivered', icon: Banknote },
 ];
 
@@ -44,6 +46,7 @@ export default function CheckoutModal({
   clearCart,
   deliveryAddress,
   onDeliveryAddressChange,
+  savedAddresses = [],
 }: CheckoutModalProps) {
   const [selectedPayment, setSelectedPayment] = useState('card');
   const [isPlacing, setIsPlacing] = useState(false);
@@ -131,6 +134,30 @@ export default function CheckoutModal({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-foreground">{deliveryAddress.label}</p>
                     <p className="text-xs text-muted-foreground">{deliveryAddress.address}</p>
+                    {savedAddresses.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {savedAddresses.map((a) => {
+                          const isActive =
+                            a.lat === deliveryAddress.lat &&
+                            a.lng === deliveryAddress.lng &&
+                            a.label === deliveryAddress.label;
+                          return (
+                            <button
+                              key={`${a.label}-${a.lat}-${a.lng}`}
+                              type="button"
+                              onClick={() => onDeliveryAddressChange(a)}
+                              className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition-colors ${
+                                isActive
+                                  ? 'border-customer bg-orange-50 text-customer'
+                                  : 'border-border bg-card text-muted-foreground hover:border-customer/40'
+                              }`}
+                            >
+                              {a.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => setAddressPickerOpen(true)}
@@ -163,7 +190,7 @@ export default function CheckoutModal({
                         </div>
                       </div>
                       <p className="text-sm font-semibold font-tabular text-foreground flex-shrink-0">
-                        ${(item.unitPrice * item.quantity).toFixed(2)}
+                        {formatMMK(item.unitPrice * item.quantity)}
                       </p>
                     </div>
                   ))}
@@ -178,15 +205,15 @@ export default function CheckoutModal({
                       <span className={`text-sm text-muted-foreground ${row.color}`}>{row.label}</span>
                       <span className={`text-sm font-semibold font-tabular ${row.color || 'text-foreground'}`}>
                         {row.value < 0
-                          ? `-$${Math.abs(row.value).toFixed(2)}`
-                          : `$${row.value.toFixed(2)}`}
+                          ? `-${formatMMK(Math.abs(row.value))}`
+                          : formatMMK(row.value)}
                       </span>
                     </div>
                   ))}
                 </div>
                 <div className="flex justify-between items-center mt-3 pt-3 border-t border-border">
                   <span className="text-base font-bold text-foreground">Total</span>
-                  <span className="text-base font-bold font-tabular text-foreground">${total.toFixed(2)}</span>
+                  <span className="text-base font-bold font-tabular text-foreground">{formatMMK(total)}</span>
                 </div>
               </div>
 
@@ -257,7 +284,7 @@ export default function CheckoutModal({
                   <>
                     <span>Place Order</span>
                     <span className="flex items-center gap-1 font-tabular">
-                      ${total.toFixed(2)} <ChevronRight className="w-4 h-4" />
+                      {formatMMK(total)} <ChevronRight className="w-4 h-4" />
                     </span>
                   </>
                 )}

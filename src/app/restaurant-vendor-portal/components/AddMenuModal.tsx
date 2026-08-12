@@ -8,6 +8,7 @@ interface AddMenuModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  restaurantId: string;
 }
 
 interface AddonRow {
@@ -31,30 +32,53 @@ const INITIAL_FORM = {
   dietaryTags: [] as string[],
 };
 
-export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModalProps) {
+export default function AddMenuModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  restaurantId,
+}: AddMenuModalProps) {
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [addons, setAddons] = useState<AddonRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const resetForm = () => {
     setFormData(INITIAL_FORM);
     setAddons([]);
+    setIsUploading(false);
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (file.size > 2 * 1024 * 1024) {
       toast.error('Image size should be less than 2MB');
+      e.target.value = '';
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setFormData((prev) => ({ ...prev, image: reader.result as string }));
-    };
-    reader.readAsDataURL(file);
+    setIsUploading(true);
+    const toastId = toast.loading('Uploading image...');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.url) {
+        throw new Error(data.message || 'Upload failed');
+      }
+      setFormData((prev) => ({ ...prev, image: data.url as string }));
+      toast.success('Image uploaded', { id: toastId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to upload image', {
+        id: toastId,
+      });
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
+    }
   };
 
   const toggleDietaryTag = (tag: string) => {
@@ -83,11 +107,18 @@ export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModa
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!restaurantId) {
+      toast.error('Missing restaurant session. Please sign in again.');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       const payload = {
         ...formData,
+        restaurantId,
         price: formData.price,
         discountPrice: formData.discountPrice,
         prepTime: formData.prepTime,
@@ -108,7 +139,10 @@ export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModa
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error('Failed to add item');
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to add item');
+      }
 
       toast.success('Menu item added successfully!');
       onSuccess();
@@ -160,11 +194,14 @@ export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModa
                   <input
                     type="file"
                     accept="image/*"
+                    disabled={isUploading}
                     onChange={handleImageChange}
-                    className="w-full cursor-pointer text-sm text-muted-foreground file:mr-4 file:rounded-lg file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-customer hover:file:bg-orange-100"
+                    className="w-full cursor-pointer text-sm text-muted-foreground file:mr-4 file:rounded-lg file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-customer hover:file:bg-orange-100 disabled:opacity-60"
                   />
                   <p className="mt-2 text-[10px] text-muted-foreground">
-                    Recommended: Square image, max 2MB.
+                    {isUploading
+                      ? 'Uploading image…'
+                      : 'Recommended: Square image, max 2MB.'}
                   </p>
                 </div>
               </div>
@@ -315,7 +352,7 @@ export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModa
 
               {addons.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
-                  No add-ons yet. Add extras like &quot;Extra Cheese&quot; + $1.50
+                  No add-ons yet. Add extras like &quot;Extra Cheese&quot; + 3,150 Ks
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -335,7 +372,7 @@ export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModa
                         value={addon.extraPrice}
                         onChange={(e) => updateAddon(addon.id, 'extraPrice', e.target.value)}
                         className="input-field w-24 py-2 text-sm"
-                        placeholder="$0.00"
+                        placeholder="0 Ks"
                       />
                       <button
                         type="button"
@@ -357,8 +394,13 @@ export default function AddMenuModal({ isOpen, onClose, onSuccess }: AddMenuModa
           <button type="button" onClick={onClose} className="btn-secondary flex-1 py-2.5">
             Cancel
           </button>
-          <button type="submit" form="add-menu-form" disabled={isLoading} className="btn-primary flex-1 py-2.5">
-            {isLoading ? 'Saving...' : 'Save Item'}
+          <button
+            type="submit"
+            form="add-menu-form"
+            disabled={isLoading || isUploading}
+            className="btn-primary flex-1 py-2.5"
+          >
+            {isUploading ? 'Uploading...' : isLoading ? 'Saving...' : 'Save Item'}
           </button>
         </div>
       </div>

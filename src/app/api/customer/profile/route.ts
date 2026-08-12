@@ -2,8 +2,7 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import CustomerProfile from '@/models/CustomerProfile';
-
-const DEFAULT_CUSTOMER_ID = 'customer-demo-id';
+import User from '@/models/User';
 
 function normalizeSavedAddresses(raw: unknown) {
   if (!Array.isArray(raw)) return [];
@@ -26,9 +25,21 @@ export async function GET(request: Request) {
   try {
     await dbConnect();
     const { searchParams } = new URL(request.url);
-    const customerId = searchParams.get('customerId') || DEFAULT_CUSTOMER_ID;
+    const customerId = searchParams.get('customerId');
+    if (!customerId) {
+      return NextResponse.json(
+        { success: false, message: 'customerId is required' },
+        { status: 400 }
+      );
+    }
 
-    const profile = await CustomerProfile.findOne({ customerId });
+    const [profile, user] = await Promise.all([
+      CustomerProfile.findOne({ customerId }),
+      User.findById(customerId).select('displayId firstName lastName email phone'),
+    ]);
+
+    const displayId = user?.displayId || undefined;
+
     return NextResponse.json({
       success: true,
       profile: profile
@@ -37,8 +48,23 @@ export async function GET(request: Request) {
             savedAddresses: Array.isArray(profile.savedAddresses)
               ? profile.savedAddresses
               : [],
+            displayId,
           }
-        : null,
+          : user
+          ? {
+              name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+              email: user.email || '',
+              phone: user.phone || '',
+              profileImage: '',
+              savedAddresses: [],
+              streakCount: 0,
+              lastLoginDate: null,
+              hasStreakReward: false,
+              streakDiscountPercent: 0,
+              streakVoucherCode: '',
+              displayId,
+            }
+          : null,
     });
   } catch (error) {
     console.error('Customer profile GET error:', error);
@@ -53,7 +79,13 @@ export async function POST(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
-    const customerId = body.customerId || DEFAULT_CUSTOMER_ID;
+    const customerId = body.customerId;
+    if (!customerId) {
+      return NextResponse.json(
+        { success: false, message: 'customerId is required' },
+        { status: 400 }
+      );
+    }
 
     const update: Record<string, unknown> = { customerId };
 

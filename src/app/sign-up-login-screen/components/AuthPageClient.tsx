@@ -60,9 +60,9 @@ const ROLE_CONFIG = {
 } as const;
 
 const DEMO_CREDENTIALS = [
-  { role: 'CUSTOMER' as UserRole, email: 'maya.chen@fooddash.app', password: 'Customer#2026', name: 'Maya Chen' },
-  { role: 'RESTAURANT' as UserRole, email: 'owner@burgerbliss.com', password: 'Restaurant#2026', name: 'Burger Bliss' },
-  { role: 'RIDER' as UserRole, email: 'carlos.ramirez@riders.fooddash.app', password: 'Rider#2026', name: 'Carlos Ramirez' },
+  { role: 'CUSTOMER' as UserRole, email: 'customer.bahan.1@test.com', password: 'Test@2026', name: 'Bahan Customer' },
+  { role: 'RESTAURANT' as UserRole, email: 'restaurant.bahan.1@test.com', password: 'Test@2026', name: 'Bahan Inya Lake Cafe' },
+  { role: 'RIDER' as UserRole, email: 'rider.bahan.1@test.com', password: 'Test@2026', name: 'Bahan Rider (Online)' },
   { role: 'ADMIN' as UserRole, email: 'ops.admin@fooddash.app', password: 'Admin#2026', name: 'Platform Admin' },
 ];
 
@@ -118,6 +118,20 @@ export default function AuthPageClient() {
       return;
     }
 
+    const sessionId = result.userId || result.user?._id || data.email;
+    const sessionName =
+      result.user?.name ||
+      result.name ||
+      [result.user?.firstName, result.user?.lastName].filter(Boolean).join(' ') ||
+      data.email;
+
+    localStorage.setItem('fooddash_session_id', sessionId);
+    localStorage.setItem('fooddash_session_name', sessionName);
+    localStorage.setItem('fooddash_session_email', data.email);
+    if (result.user?.role || activeRole) {
+      localStorage.setItem('fooddash_session_role', result.user?.role || activeRole);
+    }
+
     // Login အောင်မြင်ပါက Toast ပြပြီး သက်ဆိုင်ရာ Dashboard ကို သွားပါမယ်
     toast.success(result.message);
     setIsLoading(false);
@@ -161,6 +175,17 @@ const onSignupSubmit = async (data: SignupForm) => {
       throw new Error(result.message || 'Registration failed');
     }
 
+    const sessionId = result.userId || result.user?._id || data.email;
+    const sessionName =
+      result.user?.name ||
+      [data.firstName, data.lastName].filter(Boolean).join(' ') ||
+      data.email;
+
+    localStorage.setItem('fooddash_session_id', sessionId);
+    localStorage.setItem('fooddash_session_name', sessionName);
+    localStorage.setItem('fooddash_session_email', data.email);
+    localStorage.setItem('fooddash_session_role', activeRole);
+
     toast.success('Account created! Please sign in.');
     setActiveTab('login');
   } catch (error: any) {
@@ -195,7 +220,7 @@ const onSignupSubmit = async (data: SignupForm) => {
                 { icon: Zap, label: 'Real-time Orders', value: 'Live updates' },
                 { icon: Clock, label: 'Avg Delivery', value: '28 minutes' },
                 { icon: Star, label: 'Platform Rating', value: '4.8 / 5.0' },
-                { icon: TrendingUp, label: "Today's GMV", value: '$84,200' },
+                { icon: TrendingUp, label: "Today's GMV", value: '176.8M Ks' },
               ].map((stat) => (
                 <div key={`stat-${stat.label}`} className="bg-white/5 border border-white/10 rounded-xl p-4">
                   <stat.icon className="w-5 h-5 text-primary mb-2" />
@@ -347,7 +372,19 @@ const onSignupSubmit = async (data: SignupForm) => {
               <div>
                 <label className="block text-sm font-semibold text-foreground mb-1.5">Password</label>
                 <div className="relative">
-                  <input type={showPassword ? 'text' : 'password'} className="input-field pr-10" placeholder="Min. 8 characters" {...signupForm.register('password', { required: 'Required', minLength: { value: 8, message: 'Minimum 8 characters' } })} />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="input-field pr-10"
+                    placeholder="Min. 8 chars · Aa1@"
+                    {...signupForm.register('password', {
+                      required: 'Required',
+                      minLength: { value: 8, message: 'Minimum 8 characters' },
+                      pattern: {
+                        value: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
+                        message: 'Must include uppercase, lowercase, number, and special character',
+                      },
+                    })}
+                  />
                   <button type="button" onClick={() => setShowPassword(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>

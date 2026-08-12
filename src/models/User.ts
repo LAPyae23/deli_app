@@ -12,6 +12,7 @@ const UserSchema = new mongoose.Schema({
     required: true, 
     enum: ['CUSTOMER', 'RESTAURANT', 'RIDER', 'ADMIN'] 
   },
+  displayId: { type: String },
 }, { timestamps: true }); // Create, Update လုပ်တဲ့ အချိန်တွေကို မှတ်သားဖို့
 
 export default mongoose.models.User || mongoose.model('User', UserSchema);

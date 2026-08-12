@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, memo } from 'react';
+import React, { useState, useCallback, useMemo, memo, useEffect } from 'react';
 import Image from 'next/image';
 
 interface AppImageProps {
-    src: string;
+    src?: string | null;
     alt: string;
     width?: number;
     height?: number;
@@ -40,12 +40,26 @@ const AppImage = memo(function AppImage({
     unoptimized = false,
     ...props
 }: AppImageProps) {
-    const [imageSrc, setImageSrc] = useState(src);
+    const safeSrc = typeof src === 'string' && src.trim() ? src.trim() : fallbackSrc;
+    const [imageSrc, setImageSrc] = useState(safeSrc);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
 
-    const isExternalUrl = useMemo(() => typeof imageSrc === 'string' && imageSrc.startsWith('http'), [imageSrc]);
-    const resolvedUnoptimized = unoptimized || isExternalUrl;
+    useEffect(() => {
+        setImageSrc(safeSrc);
+        setHasError(false);
+        setIsLoading(true);
+    }, [safeSrc]);
+
+    const isExternalUrl = useMemo(
+        () => typeof imageSrc === 'string' && imageSrc.startsWith('http'),
+        [imageSrc]
+    );
+    const isDataUrl = useMemo(
+        () => typeof imageSrc === 'string' && imageSrc.startsWith('data:'),
+        [imageSrc]
+    );
+    const resolvedUnoptimized = unoptimized || isExternalUrl || isDataUrl;
 
     const handleError = useCallback(() => {
         if (!hasError && imageSrc !== fallbackSrc) {
@@ -69,7 +83,7 @@ const AppImage = memo(function AppImage({
 
     const imageProps = useMemo(() => {
         const baseProps: any = {
-            src: imageSrc,
+            src: imageSrc || fallbackSrc,
             alt,
             className: imageClassName,
             quality,
@@ -91,7 +105,7 @@ const AppImage = memo(function AppImage({
         }
 
         return baseProps;
-    }, [imageSrc, alt, imageClassName, quality, placeholder, blurDataURL, resolvedUnoptimized, priority, loading, handleError, handleLoad, onClick]);
+    }, [imageSrc, fallbackSrc, alt, imageClassName, quality, placeholder, blurDataURL, resolvedUnoptimized, priority, loading, handleError, handleLoad, onClick]);
 
     if (fill) {
         return (

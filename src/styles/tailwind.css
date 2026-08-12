@@ -3,29 +3,29 @@
 @tailwind utilities;
 
 :root {
-  --background: #F8F7F4;
-  --foreground: #1C1917;
-  --primary: #F97316;
+  --background: #F5F5F5;
+  --foreground: #171717;
+  --primary: #E62429;
   --primary-foreground: #FFFFFF;
-  --secondary: #FFF7ED;
-  --secondary-foreground: #9A3412;
-  --accent: #0D9488;
+  --secondary: #EEEEEE;
+  --secondary-foreground: #171717;
+  --accent: #1769AA;
   --accent-foreground: #FFFFFF;
-  --muted: #F5F5F4;
-  --muted-foreground: #78716C;
+  --muted: #EEEEEE;
+  --muted-foreground: #737373;
   --card: #FFFFFF;
-  --card-foreground: #1C1917;
-  --border: #E7E5E4;
-  --input: #E7E5E4;
-  --ring: #F97316;
+  --card-foreground: #171717;
+  --border: #E5E5E5;
+  --input: #E5E5E5;
+  --ring: #E62429;
   --radius: 0.625rem;
   --font-sans: 'Plus Jakarta Sans', sans-serif;
 
-  /* Role accent colors */
-  --customer: #F97316;
-  --restaurant: #0D9488;
-  --rider: #6366F1;
-  --admin: #8B5CF6;
+  /* Role accent colors — Spider-Man athletic */
+  --customer: #E62429;
+  --restaurant: #1769AA;
+  --rider: #0878D1;
+  --admin: #E62429;
 
   /* Semantic */
   --success: #16A34A;
@@ -34,26 +34,26 @@
   --warning-bg: #FFFBEB;
   --danger: #DC2626;
   --danger-bg: #FEF2F2;
-  --info: #2563EB;
+  --info: #1769AA;
   --info-bg: #EFF6FF;
 }
 
 .dark {
-  --background: #0F0F13;
-  --foreground: #F5F5F4;
-  --primary: #F97316;
+  --background: #070707;
+  --foreground: #FFFFFF;
+  --primary: #E62429;
   --primary-foreground: #FFFFFF;
-  --secondary: #1C1917;
-  --secondary-foreground: #D6D3D1;
-  --accent: #0D9488;
+  --secondary: #1A1A1A;
+  --secondary-foreground: #FFFFFF;
+  --accent: #0878D1;
   --accent-foreground: #FFFFFF;
-  --muted: #1C1917;
-  --muted-foreground: #A8A29E;
-  --card: #18181B;
-  --card-foreground: #F5F5F4;
-  --border: #27272A;
-  --input: #27272A;
-  --ring: #F97316;
+  --muted: #1A1A1A;
+  --muted-foreground: #9CA3AF;
+  --card: #121212;
+  --card-foreground: #FFFFFF;
+  --border: #1F1F1F;
+  --input: #1F1F1F;
+  --ring: #E62429;
 }
 
 @layer base {
@@ -90,16 +90,16 @@
     display: none;
   }
   .gradient-orange {
-    background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
+    background: linear-gradient(135deg, #E62429 0%, #B71C1C 100%);
   }
   .gradient-teal {
-    background: linear-gradient(135deg, #0D9488 0%, #0F766E 100%);
+    background: linear-gradient(135deg, #1769AA 0%, #0878D1 100%);
   }
   .gradient-indigo {
-    background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%);
+    background: linear-gradient(135deg, #0878D1 0%, #1769AA 100%);
   }
   .gradient-violet {
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+    background: linear-gradient(135deg, #E62429 0%, #1769AA 100%);
   }
   .card-shadow {
     box-shadow: 0 1px 3px 0 rgba(0,0,0,0.07), 0 1px 2px -1px rgba(0,0,0,0.05);
