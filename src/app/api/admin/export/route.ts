@@ -20,7 +20,12 @@ export async function GET() {
   try {
     await dbConnect();
 
-    const orders = await Order.find({}).sort({ createdAt: -1 }).lean();
+    const orders = await Order.find({})
+      .select(
+        'orderNumber restaurantName customerName totals.total totals.totalAmount discount surgePrice weather vehicleType distanceKm durationMins prepTime customerOrderCount items.name items.category items.quantity cancelReason status createdAt'
+      )
+      .sort({ createdAt: -1 })
+      .lean();
 
     const header =
       'OrderID,OrderNumber,RestaurantName,CustomerName,TotalAmount,Discount,SurgePrice,Weather,VehicleType,DistanceKm,DurationMins,PrepTimeMins,CustomerOrderCount,Items,CancelReason,Status,CreatedAt';

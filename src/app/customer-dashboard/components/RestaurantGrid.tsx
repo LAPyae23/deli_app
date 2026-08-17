@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Star, Clock, Bike, Loader2, Store, MapPin } from 'lucide-react';
 import AppImage from '@/components/ui/AppImage';
 import { formatMMK } from '@/lib/currency';
+import { formatRating } from '@/lib/formatRating';
 import type { DeliveryAddressInfo, Restaurant } from '../types';
 
 type RestaurantProfileDoc = {
@@ -12,6 +13,8 @@ type RestaurantProfileDoc = {
   description?: string;
   logoImage?: string;
   coverImage?: string;
+  rating?: number | null;
+  reviews?: number;
   address?: string;
   openingTime?: string;
   closingTime?: string;
@@ -20,7 +23,7 @@ type RestaurantProfileDoc = {
 };
 
 const PLACEHOLDER_IMAGE = '/assets/images/no_image.png';
-const MAX_RADIUS_KM = 7;
+const DEFAULT_RADIUS_KM = 7;
 
 function haversineKm(
   a: { lat: number; lng: number },
@@ -60,8 +63,15 @@ function normalizeStoreStatus(
   return 'OPEN';
 }
 
+function parseRating(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restaurant {
-  const image = profile.coverImage || profile.logoImage || PLACEHOLDER_IMAGE;
+  const coverImage = profile.coverImage || '';
+  const logoImage = profile.logoImage || '';
+  const image = coverImage || logoImage || PLACEHOLDER_IMAGE;
   const name = profile.restaurantName || 'Restaurant';
   const lat = Number(profile.location?.lat);
   const lng = Number(profile.location?.lng);
@@ -72,13 +82,15 @@ function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restaurant {
     id: profile.restaurantId || name,
     name,
     cuisine: profile.description?.trim() || profile.address || 'Local restaurant',
-    rating: 4.8,
-    reviews: 0,
+    rating: parseRating(profile.rating),
+    reviews: Number(profile.reviews) || 0,
     deliveryTime: '20-35 min',
-    deliveryFee: 1.99,
+    deliveryFee: 1500,
     minOrder: 0,
     image,
     imageAlt: `${name} cover photo`,
+    logoImage,
+    coverImage,
     tags: [],
     isOpen,
     storeStatus,
@@ -112,6 +124,7 @@ export default function RestaurantGrid({
   searchQuery,
 }: RestaurantGridProps) {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [maxRadiusKm, setMaxRadiusKm] = useState(DEFAULT_RADIUS_KM);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,6 +145,10 @@ export default function RestaurantGrid({
           mapProfileToRestaurant
         );
         setRestaurants(mapped);
+        const radius = Number(data.maxDeliveryRadiusKm);
+        if (Number.isFinite(radius) && radius >= 1) {
+          setMaxRadiusKm(Math.min(20, Math.round(radius)));
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load restaurants');
@@ -183,10 +200,10 @@ export default function RestaurantGrid({
 
         if (!resLat || !resLng || !custLat || !custLng) return true; // Fallback if coords are missing
 
-        return (restaurant.distanceKm ?? 0) <= MAX_RADIUS_KM;
+        return (restaurant.distanceKm ?? 0) <= maxRadiusKm;
       })
       .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
-  }, [restaurants, deliveryAddress?.lat, deliveryAddress?.lng]);
+  }, [restaurants, deliveryAddress?.lat, deliveryAddress?.lng, maxRadiusKm]);
 
   const filteredRestaurants = nearbyRestaurants.filter((restaurant) => {
     if (!searchQuery) return true;
@@ -203,7 +220,7 @@ export default function RestaurantGrid({
       <div className="mb-5">
         <h2 className="text-lg font-bold text-foreground">Restaurants Near You</h2>
         <p className="text-sm text-muted-foreground">
-          Within {MAX_RADIUS_KM} km of your delivery address
+          Within {maxRadiusKm} km of your delivery address
           {deliveryAddress?.address ? ` · ${deliveryAddress.address}` : ''}
         </p>
       </div>
@@ -237,7 +254,7 @@ export default function RestaurantGrid({
           <MapPin className="h-10 w-10 text-muted-foreground" />
           <h3 className="text-lg font-bold text-foreground">No restaurants nearby</h3>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Nothing within {MAX_RADIUS_KM} km of your delivery address. Try updating your address
+            Nothing within {maxRadiusKm} km of your delivery address. Try updating your address
             in Profile.
           </p>
         </div>
@@ -259,9 +276,10 @@ export default function RestaurantGrid({
       {!isLoading && !error && filteredRestaurants.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredRestaurants.map((r) => {
-            const isDataImage = r.image.startsWith('data:');
             const selectable = canSelectRestaurant(r);
             const badge = restaurantBadge(r);
+            const coverSrc = r.coverImage || r.image;
+            const logoSrc = r.logoImage;
             return (
               <div
                 key={r.id}
@@ -282,27 +300,28 @@ export default function RestaurantGrid({
                 }`}
               >
                 <div className="relative h-40 overflow-hidden bg-muted">
-                  {isDataImage ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={r.image}
-                      alt={r.imageAlt}
-                      className={`absolute inset-0 h-full w-full object-cover transition-transform duration-300 ${
-                        selectable ? 'group-hover:scale-105' : ''
-                      }`}
-                    />
-                  ) : (
                     <AppImage
-                      src={r.image}
+                      src={coverSrc}
                       alt={r.imageAlt}
                       fill
+                      fallbackSrc={PLACEHOLDER_IMAGE}
                       className={`object-cover transition-transform duration-300 ${
                         selectable ? 'group-hover:scale-105' : ''
                       }`}
                       sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-                      unoptimized
                     />
-                  )}
+                    {logoSrc ? (
+                      <div className="absolute bottom-2 left-2 h-10 w-10 overflow-hidden rounded-lg border border-white/80 bg-card shadow-sm">
+                        <AppImage
+                          src={logoSrc}
+                          alt={`${r.name} logo`}
+                          fill
+                          fallbackSrc={PLACEHOLDER_IMAGE}
+                          className="object-cover"
+                          sizes="40px"
+                        />
+                      </div>
+                    ) : null}
                   {typeof r.distanceKm === 'number' && (
                     <div className="absolute right-2 top-2 rounded-lg bg-card/95 px-2 py-1 text-xs font-bold text-foreground shadow-sm backdrop-blur-sm">
                       {r.distanceKm.toFixed(1)} km
@@ -334,7 +353,7 @@ export default function RestaurantGrid({
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1 font-semibold text-foreground">
                       <Star className="h-3 w-3 fill-warning text-warning" />
-                      {r.rating}
+                      {formatRating(r.rating)}
                       {r.reviews > 0 && (
                         <span className="font-normal text-muted-foreground">
                           ({r.reviews.toLocaleString()})

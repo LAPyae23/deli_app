@@ -34,8 +34,8 @@ export async function GET(request: Request) {
     }
 
     const [profile, user] = await Promise.all([
-      CustomerProfile.findOne({ customerId }),
-      User.findById(customerId).select('displayId firstName lastName email phone'),
+      CustomerProfile.findOne({ customerId }).lean(),
+      User.findById(customerId).select('displayId firstName lastName email phone').lean(),
     ]);
 
     const displayId = user?.displayId || undefined;
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       success: true,
       profile: profile
         ? {
-            ...profile.toObject(),
+            ...profile,
             savedAddresses: Array.isArray(profile.savedAddresses)
               ? profile.savedAddresses
               : [],
@@ -62,6 +62,9 @@ export async function GET(request: Request) {
               hasStreakReward: false,
               streakDiscountPercent: 0,
               streakVoucherCode: '',
+              hasPromo: false,
+              promoCode: '',
+              promoDiscountPercent: 0,
               displayId,
             }
           : null,

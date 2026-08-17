@@ -16,7 +16,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const profile = await RiderProfile.findOne({ riderId });
+    const profile = await RiderProfile.findOne({ riderId }).lean();
     return NextResponse.json({ success: true, profile: profile || null });
   } catch (error) {
     console.error('Rider profile GET error:', error);

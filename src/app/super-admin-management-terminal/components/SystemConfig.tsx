@@ -4,7 +4,6 @@ import React, { useEffect, useState } from 'react';
 import { Save, Zap, Percent, MapPin, Lock, UserPlus, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { formatKyat } from '@/lib/currency';
 
 interface SurgeZone {
   id: string;
@@ -23,9 +22,74 @@ interface SurgeZone {
   suggestedFeeNote?: string;
 }
 
+/** Local draft while dragging — parent state updates only on mouse/touch release. */
+function DeferredSlider({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix = '',
+  disabled = false,
+  format,
+  className = 'w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-admin',
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  disabled?: boolean;
+  format?: (n: number) => string;
+  className?: string;
+  onCommit: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    if (draft !== value) onCommit(draft);
+  };
+
+  const display = format ? format(draft) : `${draft}${suffix}`;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-xs font-semibold text-muted-foreground">{label}</label>
+        <span className="text-sm font-bold text-foreground font-tabular">{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => setDraft(Number(e.target.value))}
+        onMouseUp={commit}
+        onTouchEnd={commit}
+        onBlur={commit}
+        onKeyUp={commit}
+        className={className}
+      />
+      <div className="flex justify-between text-xs text-muted-foreground mt-1">
+        <span>{format ? format(min) : `${min}${suffix}`}</span>
+        <span>{format ? format(max) : `${max}${suffix}`}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function SystemConfig() {
-  const [globalCommission, setGlobalCommission] = useState(18);
-  const [platformFee, setPlatformFee] = useState(0.5);
+  const [restaurantCommission, setRestaurantCommission] = useState(30);
+  const [riderCommission, setRiderCommission] = useState(10);
+  const [maxDeliveryRadiusKm, setMaxDeliveryRadiusKm] = useState(7);
   const [surgeZones, setSurgeZones] = useState<SurgeZone[]>([]);
   const [surgeLoading, setSurgeLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -53,11 +117,14 @@ export default function SystemConfig() {
         if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load');
         if (cancelled || !data.config) return;
 
-        if (data.config.globalCommission != null) {
-          setGlobalCommission(Number(data.config.globalCommission));
+        if (data.config.restaurantCommission != null) {
+          setRestaurantCommission(Number(data.config.restaurantCommission));
         }
-        if (data.config.platformFee != null) {
-          setPlatformFee(Number(data.config.platformFee));
+        if (data.config.riderCommission != null) {
+          setRiderCommission(Number(data.config.riderCommission));
+        }
+        if (data.config.maxDeliveryRadiusKm != null) {
+          setMaxDeliveryRadiusKm(Number(data.config.maxDeliveryRadiusKm));
         }
         if (data.config.autoSurge != null) {
           setAutoSurge(Boolean(data.config.autoSurge));
@@ -186,7 +253,6 @@ export default function SystemConfig() {
       if (res.ok && data.success) {
         toast.success(next ? 'Auto-surge balancer enabled' : 'Manual surge mode');
       }
-      // Refresh live zones
       const surgeRes = await fetch('/api/admin/surge');
       const surgeData = await surgeRes.json();
       if (surgeRes.ok && surgeData.success) {
@@ -206,8 +272,9 @@ export default function SystemConfig() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          globalCommission,
-          platformFee,
+          restaurantCommission,
+          riderCommission,
+          maxDeliveryRadiusKm,
           autoSurge,
           surgeImbalanceThreshold: imbalanceThreshold,
         }),
@@ -255,11 +322,18 @@ export default function SystemConfig() {
         <h2 className="font-bold text-base text-foreground">System Config</h2>
         <button
           onClick={handleSave}
-          disabled={isSaving}
+          disabled={isSaving || isLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-admin/20 text-admin border border-admin/30 rounded-lg hover:bg-admin/30 transition-colors active:scale-95 disabled:opacity-50"
         >
           {isSaving ? (
-            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
           ) : (
             <Save className="w-3 h-3" />
           )}
@@ -268,53 +342,52 @@ export default function SystemConfig() {
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-hide p-5 space-y-6">
-        {/* Global Commission */}
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Percent className="w-4 h-4 text-customer" />
             <p className="text-sm font-bold text-foreground">Commission Rates</p>
           </div>
           <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Global Default Rate</label>
-                <span className="text-sm font-bold text-foreground font-tabular">{globalCommission}%</span>
-              </div>
-              <input
-                type="range"
-                min={10}
-                max={30}
-                step={0.5}
-                value={globalCommission}
-                onChange={e => setGlobalCommission(Number(e.target.value))}
-                className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-admin"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                <span>10%</span><span>30%</span>
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Platform Fee (per order)</label>
-                <span className="text-sm font-bold text-foreground font-tabular">{formatKyat(platformFee)}</span>
-              </div>
-              <input
-                type="range"
-                min={0.25}
-                max={2.00}
-                step={0.25}
-                value={platformFee}
-                onChange={e => setPlatformFee(Number(e.target.value))}
-                className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-admin"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                <span>{formatKyat(0.25)}</span><span>{formatKyat(2)}</span>
-              </div>
-            </div>
+            <DeferredSlider
+              label="Restaurant Commission (%)"
+              value={restaurantCommission}
+              min={0}
+              max={50}
+              step={1}
+              suffix="%"
+              onCommit={setRestaurantCommission}
+            />
+            <DeferredSlider
+              label="Rider Commission (%)"
+              value={riderCommission}
+              min={0}
+              max={30}
+              step={1}
+              suffix="%"
+              onCommit={setRiderCommission}
+            />
           </div>
         </div>
 
-        {/* Surge Pricing */}
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <MapPin className="w-4 h-4 text-customer" />
+            <p className="text-sm font-bold text-foreground">Delivery Coverage</p>
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Customers only see restaurants within this distance of their delivery address.
+          </p>
+          <DeferredSlider
+            label="Max Delivery Radius (km)"
+            value={maxDeliveryRadiusKm}
+            min={1}
+            max={20}
+            step={1}
+            suffix=" km"
+            onCommit={setMaxDeliveryRadiusKm}
+          />
+        </div>
+
         <div>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -332,14 +405,14 @@ export default function SystemConfig() {
           </div>
 
           <p className="mb-2 text-xs text-muted-foreground">
-            When active orders exceed available riders by {imbalanceThreshold}×, surge activates
-            at 1.5×+ delivery multiplier.
+            When active orders exceed available riders by {imbalanceThreshold}
+            {'×'}, surge activates at 1.5×+ delivery multiplier.
           </p>
-          {surgeSummary && (
+          {surgeSummary ? (
             <p className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-2.5 py-1.5 text-[11px] font-semibold text-warning">
               {surgeSummary}
             </p>
-          )}
+          ) : null}
 
           <div className="space-y-3">
             {surgeLoading ? (
@@ -374,16 +447,16 @@ export default function SystemConfig() {
                         <span className="text-sm font-semibold text-foreground truncate">
                           {zone.name}
                         </span>
-                        {isHighDemand && (
+                        {isHighDemand ? (
                           <span className="rounded-full bg-danger/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-danger">
                             Imbalance
                           </span>
-                        )}
-                        {zone.autoActivated && autoSurge && (
+                        ) : null}
+                        {zone.autoActivated && autoSurge ? (
                           <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-warning">
                             Auto
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <button
                         type="button"
@@ -400,38 +473,26 @@ export default function SystemConfig() {
                         />
                       </button>
                     </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-2 gap-2">
-                      <span>
-                        {zone.activeOrders} active · {zone.availableRiders} riders
-                        {demandRatio != null ? ` · ${Number(demandRatio).toFixed(1)}×` : ''}
-                      </span>
-                      <span
-                        className={`font-bold font-tabular ${
-                          zone.active ? 'text-warning' : 'text-muted-foreground'
-                        }`}
-                      >
-                        {Number(zone.multiplier).toFixed(1)}×
-                      </span>
-                    </div>
-                    {zone.suggestedFeeNote && (
+                    {zone.suggestedFeeNote ? (
                       <p className="mb-2 text-[10px] text-muted-foreground">
                         {zone.suggestedFeeNote}
                       </p>
-                    )}
-                    <input
-                      type="range"
-                      min={1.0}
-                      max={3.0}
+                    ) : null}
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      {zone.activeOrders} active · {zone.availableRiders} riders
+                      {demandRatio != null ? ` · ${Number(demandRatio).toFixed(1)}×` : ''}
+                    </p>
+                    <DeferredSlider
+                      label="Delivery multiplier"
+                      value={Number(zone.multiplier)}
+                      min={1}
+                      max={3}
                       step={0.1}
-                      value={zone.multiplier}
-                      onChange={(e) => updateMultiplier(zone.id, Number(e.target.value))}
                       disabled={autoSurge}
+                      format={(n) => `${Number(n).toFixed(1)}×`}
                       className="w-full h-1 bg-muted rounded-full appearance-none cursor-pointer accent-warning disabled:opacity-40 disabled:cursor-not-allowed"
+                      onCommit={(n) => updateMultiplier(zone.id, n)}
                     />
-                    <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                      <span>1.0×</span>
-                      <span>3.0×</span>
-                    </div>
                   </div>
                 );
               })
@@ -439,7 +500,6 @@ export default function SystemConfig() {
           </div>
         </div>
 
-        {/* Create New Admin */}
         <div>
           <div className="mb-3 flex items-center gap-2">
             <UserPlus className="h-4 w-4 text-admin" />
@@ -502,7 +562,6 @@ export default function SystemConfig() {
           </form>
         </div>
 
-        {/* Security / Change Password */}
         <div>
           <div className="mb-3 flex items-center gap-2">
             <Lock className="h-4 w-4 text-admin" />

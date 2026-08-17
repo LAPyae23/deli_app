@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Bike, Home, DollarSign, ClipboardList, Settings, LogOut,
   MapPin, Phone, MessageCircle, Clock, Star, Navigation,
   CheckCircle, X, TrendingUp, Route, Wallet,
   UtensilsCrossed, Map as MapIcon, Save, Camera, User, Lock,
+  AlertTriangle, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
@@ -16,10 +17,18 @@ import AppImage from '@/components/ui/AppImage';
 import Link from 'next/link';
 import { formatKyat } from '@/lib/currency';
 import {
+  dashboardChartMeta,
+  dashboardPeriodLabel,
+  dashboardSummaryTitle,
+  type DashboardRange,
+} from '@/lib/dashboardRange';
+import DashboardRangeToggle from '@/components/DashboardRangeToggle';
+import {
   SUPPORT_ADMIN_ID,
   SUPPORT_ADMIN_NAME,
   SUPPORT_ADMIN_ROLE,
   RIDER_TO_CUSTOMER_QUICK_REPLIES,
+  RIDER_TO_RESTAURANT_QUICK_REPLIES,
 } from '@/lib/support';
 import { useNotificationSound } from '@/hooks/useNotificationSound';
 import EarningsChart from './EarningsChart';
@@ -30,6 +39,15 @@ const RiderRouteMap = dynamic(() => import('./RiderRouteMap'), {
   loading: () => (
     <div className="flex h-full w-full items-center justify-center bg-muted text-sm text-muted-foreground">
       Loading map…
+    </div>
+  ),
+});
+
+const RiderIdleMap = dynamic(() => import('./RiderIdleMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center bg-slate-100 text-sm text-slate-500">
+      Loading map...
     </div>
   ),
 });
@@ -52,6 +70,7 @@ interface DispatchOrder {
   id: string;
   orderNumber: string;
   restaurant: string;
+  restaurantId: string;
   restaurantAddr: string;
   customerAddr: string;
   customerId: string;
@@ -133,13 +152,15 @@ function mapApiOrderToDispatch(raw: Record<string, unknown>): DispatchOrder {
     id: String(raw._id ?? ''),
     orderNumber: String(raw.orderNumber || ''),
     restaurant: String(raw.restaurantName || 'Restaurant'),
+    restaurantId: String(raw.restaurantId || ''),
     restaurantAddr: String(raw.restaurantName || 'Restaurant pickup'),
     customerAddr: String(deliveryAddress.address || 'Customer address'),
     customerId: String(raw.customerId || ''),
     customerName: String(raw.customerName || 'Customer'),
     pickupDistance: 'Nearby',
     dropDistance: `${dropKm.toFixed(1)} km`,
-    estimatedEarnings: deliveryFee > 0 ? deliveryFee : Math.max(1500, Math.round(total * 0.12)),
+    estimatedEarnings:
+      deliveryFee > 0 ? Math.round(deliveryFee * 0.9) : Math.max(1500, Math.round(total * 0.12)),
     estimatedTip: Math.max(0, Math.round(total * 0.05)),
     items: itemCount || 1,
     restaurantCoords,
@@ -181,6 +202,26 @@ const NAV_ITEMS: { key: string; label: string; icon: React.ElementType; id: Ride
 ];
 
 const INITIAL_RIDER_POS = { lat: 16.8409, lng: 96.1735 };
+const REMITTANCE_PRESETS = [10_000, 20_000, 50_000, 100_000];
+type RemittanceMethod = 'KBZPay' | 'WavePay';
+
+function isBrowser() {
+  return typeof window !== 'undefined';
+}
+
+/** Absolute same-origin URL — relative `/api/...` fails during SSR (Failed to fetch). */
+function clientApiUrl(path: string) {
+  if (!isBrowser()) return path;
+  return `${window.location.origin}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+async function readJsonSafe(res: Response): Promise<Record<string, unknown> | null> {
+  try {
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
 
 /* ─── Shared UI atoms ─────────────────────────────────────────── */
 
@@ -247,7 +288,8 @@ function ContactRow({
           <button
             type="button"
             onClick={onMessage}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-rider"
+            disabled={!onMessage}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-rider disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Message"
           >
             <MessageCircle className="h-3.5 w-3.5" />
@@ -264,10 +306,9 @@ export default function RiderDashboardClient() {
   const [dutyStatus, setDutyStatus] = useState<DutyStatus>('AVAILABLE');
   const [incomingDispatch, setIncomingDispatch] = useState<DispatchOrder | null>(null);
   const [dispatchTimer, setDispatchTimer] = useState(30);
-  const [activeDelivery, setActiveDelivery] = useState<DispatchOrder | null>(null);
-  const [activeDeliveryStatus, setActiveDeliveryStatus] = useState<
-    'ACCEPTED' | 'PICKED_UP' | 'DELIVERED' | null
-  >(null);
+  const [activeDeliveries, setActiveDeliveries] = useState<
+    (DispatchOrder & { deliveryStatus: 'ACCEPTED' | 'PICKED_UP' })[]
+  >([]);
   const [activeTab, setActiveTab] = useState<RiderTab>('home');
   const [riderPos, setRiderPos] = useState(INITIAL_RIDER_POS);
   const [accepting, setAccepting] = useState(false);
@@ -276,65 +317,106 @@ export default function RiderDashboardClient() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [routesError, setRoutesError] = useState<string | null>(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [remittanceOpen, setRemittanceOpen] = useState(false);
+  const [remittanceMethod, setRemittanceMethod] = useState<RemittanceMethod>('KBZPay');
+  const [remittanceAmount, setRemittanceAmount] = useState('');
+  const [remitting, setRemitting] = useState(false);
   const [sessionId, setSessionId] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatOrderId, setChatOrderId] = useState<string | null>(null);
+  const [chatPeer, setChatPeer] = useState<'customer' | 'restaurant'>('customer');
   const [supportOpen, setSupportOpen] = useState(false);
+  const [statsRange, setStatsRange] = useState<DashboardRange>('7d');
   const playNotification = useNotificationSound();
 
-  const showDispatch = !!incomingDispatch && dutyStatus === 'AVAILABLE' && !activeDelivery;
+  const showDispatch =
+    !!incomingDispatch &&
+    dutyStatus !== 'OFFLINE' &&
+    activeDeliveries.length < 2 &&
+    !isBlocked;
 
   useEffect(() => {
-    const role = localStorage.getItem('fooddash_session_role');
+    if (isBlocked) setIncomingDispatch(null);
+  }, [isBlocked]);
+
+  useEffect(() => {
+    if (!isBrowser()) return;
+    const role = window.localStorage.getItem('fooddash_session_role');
     if (role !== 'RIDER') {
       window.location.href = '/';
     }
   }, []);
 
   useEffect(() => {
-    setSessionId(localStorage.getItem('fooddash_session_id') || '');
+    if (!isBrowser()) return;
+    setSessionId(window.localStorage.getItem('fooddash_session_id') || '');
   }, []);
 
-  const loadRoutes = async () => {
+  const loadDashboard = useCallback(async () => {
+    if (!isBrowser()) return;
     try {
-      const sessionId = localStorage.getItem('fooddash_session_id');
-      if (!sessionId) return;
+      const riderId = window.localStorage.getItem('fooddash_session_id');
+      if (!riderId) return;
 
       const res = await fetch(
-        `/api/rider/routes?riderId=${encodeURIComponent(sessionId)}`
+        clientApiUrl(
+          `/api/rider/dashboard?riderId=${encodeURIComponent(riderId)}&range=${statsRange}`
+        ),
+        { cache: 'no-store' }
       );
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setRouteStops(Array.isArray(data.routes) ? data.routes : []);
+      const data = await readJsonSafe(res);
+      if (!res.ok || !data?.success) {
+        throw new Error(String(data?.message || `Dashboard request failed (${res.status})`));
+      }
+      setDashboardData(data);
+      setDashboardError(null);
+      const wallet = data.wallet as { walletBalance?: number; isBlocked?: boolean } | undefined;
+      if (wallet) {
+        setWalletBalance(Number(wallet.walletBalance) || 0);
+        setIsBlocked(wallet.isBlocked === true);
       }
     } catch (e) {
-      console.error('Failed to load rider routes', e);
+      console.error('Failed to load rider dashboard', e);
+      setDashboardError(e instanceof Error ? e.message : 'Failed to load dashboard');
     }
-  };
+  }, [statsRange]);
+
+  const loadRoutes = useCallback(async () => {
+    if (!isBrowser()) return;
+    try {
+      const riderId = window.localStorage.getItem('fooddash_session_id');
+      if (!riderId) return;
+
+      const res = await fetch(
+        clientApiUrl(`/api/rider/routes?riderId=${encodeURIComponent(riderId)}`),
+        { cache: 'no-store' }
+      );
+      const data = await readJsonSafe(res);
+      if (!res.ok || !data?.success) {
+        throw new Error(String(data?.message || `Routes request failed (${res.status})`));
+      }
+      setRouteStops(Array.isArray(data.routes) ? (data.routes as RouteStop[]) : []);
+      setRoutesError(null);
+    } catch (e) {
+      console.error('Failed to load rider routes', e);
+      setRoutesError(e instanceof Error ? e.message : 'Failed to load routes');
+    }
+  }, []);
 
   useEffect(() => {
-    async function loadDashboard() {
-      try {
-        const sessionId = localStorage.getItem('fooddash_session_id');
-        if (!sessionId) return;
-
-        const res = await fetch(
-          `/api/rider/dashboard?riderId=${encodeURIComponent(sessionId)}`
-        );
-        const data = await res.json();
-        if (res.ok && data.success) setDashboardData(data);
-      } catch (e) {
-        console.error('Failed to load rider dashboard', e);
-      }
-    }
-
-    loadDashboard();
+    if (!isBrowser()) return;
+    void loadDashboard();
     void loadRoutes();
-    const interval = setInterval(() => {
-      loadDashboard();
+    const interval = window.setInterval(() => {
+      void loadDashboard();
       void loadRoutes();
     }, 15000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => window.clearInterval(interval);
+  }, [loadDashboard, loadRoutes]);
 
   // Load rider profile
   useEffect(() => {
@@ -368,6 +450,12 @@ export default function RiderDashboardClient() {
           } else if (String(data.profile.status) === 'Online') {
             setDutyStatus((prev) => (prev === 'DELIVERING' ? prev : 'AVAILABLE'));
           }
+          if (data.profile.walletBalance != null) {
+            setWalletBalance(Number(data.profile.walletBalance) || 0);
+          }
+          if (typeof data.profile.isBlocked === 'boolean') {
+            setIsBlocked(data.profile.isBlocked);
+          }
         }
       } catch (error) {
         console.warn(error);
@@ -382,19 +470,23 @@ export default function RiderDashboardClient() {
     };
   }, []);
 
-  // Poll for available dispatch orders (skipped when Offline in RiderProfile / duty)
+  // Poll for available dispatch orders (skipped when Offline, blocked, or at capacity)
   useEffect(() => {
-    if (dutyStatus !== 'AVAILABLE' || activeDelivery) return;
+    if (dutyStatus === 'OFFLINE' || isBlocked) return;
+    if (activeDeliveries.length >= 2) return;
 
     let cancelled = false;
     const riderId = localStorage.getItem('fooddash_session_id') || '';
+    const takenIds = new Set(activeDeliveries.map((d) => d.id));
 
     async function pollAvailableOrders() {
+      if (activeDeliveries.length >= 2) return;
       try {
         // Server returns [] if this rider is Offline
         const params = new URLSearchParams({
           status: 'PREPARING',
           unassigned: 'true',
+          limit: '20',
         });
         if (riderId) params.set('forRiderId', riderId);
 
@@ -403,12 +495,16 @@ export default function RiderDashboardClient() {
         if (!res.ok || !data.success || cancelled) return;
 
         const orders = Array.isArray(data.orders) ? data.orders : [];
-        if (orders.length === 0) {
+        const nextRaw = orders.find((raw: Record<string, unknown>) => {
+          const id = String(raw._id ?? '');
+          return id && !takenIds.has(id);
+        });
+        if (!nextRaw) {
           setIncomingDispatch(null);
           return;
         }
 
-        const mapped = mapApiOrderToDispatch(orders[0] as Record<string, unknown>);
+        const mapped = mapApiOrderToDispatch(nextRaw as Record<string, unknown>);
         if (!mapped.id) return;
 
         setIncomingDispatch((prev) => {
@@ -428,7 +524,7 @@ export default function RiderDashboardClient() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [dutyStatus, activeDelivery, playNotification]);
+  }, [dutyStatus, activeDeliveries, playNotification, isBlocked]);
 
   useEffect(() => {
     if (!showDispatch) return;
@@ -446,30 +542,35 @@ export default function RiderDashboardClient() {
   }, [showDispatch]);
 
   useEffect(() => {
-    if (!activeDelivery) return;
+    if (dutyStatus === 'OFFLINE') return;
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       toast.error('Geolocation is not supported on this device');
       return;
     }
 
-    const orderId = activeDelivery.id;
+    const orderIds = activeDeliveries.map((d) => d.id);
     let lastPatchAt = 0;
     const PATCH_INTERVAL_MS = 8_000;
     let cancelled = false;
 
     const patchRiderCoords = async (lat: number, lng: number) => {
+      if (orderIds.length === 0) return;
       const now = Date.now();
       if (now - lastPatchAt < PATCH_INTERVAL_MS) return;
       lastPatchAt = now;
-      try {
-        await fetch(`/api/orders/${orderId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ riderCoords: { lat, lng } }),
-        });
-      } catch (error) {
-        console.warn('Failed to update rider coords:', error);
-      }
+      await Promise.all(
+        orderIds.map(async (orderId) => {
+          try {
+            await fetch(`/api/orders/${orderId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ riderCoords: { lat, lng } }),
+            });
+          } catch (error) {
+            console.warn('Failed to update rider coords:', error);
+          }
+        })
+      );
     };
 
     const watchId = navigator.geolocation.watchPosition(
@@ -495,10 +596,10 @@ export default function RiderDashboardClient() {
       cancelled = true;
       navigator.geolocation.clearWatch(watchId);
     };
-  }, [activeDelivery?.id]);
+  }, [dutyStatus, activeDeliveries]);
 
   const toggleDuty = async () => {
-    if (dutyStatus === 'DELIVERING') {
+    if (activeDeliveries.length > 0) {
       toast.error('Finish your current delivery before going offline');
       return;
     }
@@ -537,6 +638,10 @@ export default function RiderDashboardClient() {
 
   const acceptDispatch = async () => {
     if (!incomingDispatch) return;
+    if (activeDeliveries.length >= 2) {
+      toast.error('You already have 2 active orders');
+      return;
+    }
     setAccepting(true);
     try {
       const res = await fetch(`/api/orders/${incomingDispatch.id}`, {
@@ -552,11 +657,14 @@ export default function RiderDashboardClient() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to accept');
 
-      setActiveDelivery(incomingDispatch);
-      setActiveDeliveryStatus('ACCEPTED');
+      setActiveDeliveries((prev) => [
+        ...prev,
+        { ...incomingDispatch, deliveryStatus: 'ACCEPTED' },
+      ]);
       setRiderPos(MOCK_COORDS.rider);
       setIncomingDispatch(null);
       setDutyStatus('DELIVERING');
+      setActiveTab('routes');
       toast.success(`Dispatch accepted — heading to ${incomingDispatch.restaurant}`);
       void loadRoutes();
     } catch (error) {
@@ -572,10 +680,11 @@ export default function RiderDashboardClient() {
     toast.info('Dispatch declined');
   };
 
-  const markPickedUp = async () => {
-    if (!activeDelivery) return;
+  const markPickedUp = async (orderId: string) => {
+    const order = activeDeliveries.find((d) => d.id === orderId);
+    if (!order) return;
     try {
-      const res = await fetch(`/api/orders/${activeDelivery.id}`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'OUT_FOR_DELIVERY' }),
@@ -583,10 +692,14 @@ export default function RiderDashboardClient() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to update status');
 
-      setActiveDeliveryStatus('PICKED_UP');
+      setActiveDeliveries((prev) =>
+        prev.map((d) =>
+          d.id === orderId ? { ...d, deliveryStatus: 'PICKED_UP' } : d
+        )
+      );
       setRiderPos(
-        activeDelivery.restaurantCoords?.lat
-          ? activeDelivery.restaurantCoords
+        order.restaurantCoords?.lat
+          ? order.restaurantCoords
           : MOCK_COORDS.restaurant
       );
       toast.success('Order picked up — heading to customer');
@@ -595,15 +708,16 @@ export default function RiderDashboardClient() {
     }
   };
 
-  const markDelivered = async () => {
-    if (!activeDelivery) return;
+  const markDelivered = async (orderId: string) => {
+    const order = activeDeliveries.find((d) => d.id === orderId);
+    if (!order) return;
     try {
-      const baseRiderFee = activeDelivery.estimatedEarnings || 0;
-      const tipAmount = activeDelivery.estimatedTip || 0;
-      const distanceKm = parseFloat(activeDelivery.dropDistance) || 0;
+      const baseRiderFee = order.estimatedEarnings || 0;
+      const tipAmount = order.estimatedTip || 0;
+      const distanceKm = parseFloat(order.dropDistance) || 0;
       const durationMins = 25; // Average static duration for now
 
-      const res = await fetch(`/api/orders/${activeDelivery.id}`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -617,15 +731,72 @@ export default function RiderDashboardClient() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to update status');
 
-      setActiveDelivery(null);
-      setActiveDeliveryStatus(null);
-      setRiderPos(INITIAL_RIDER_POS);
-      setDutyStatus('AVAILABLE');
-      setDispatchTimer(30);
+      const remaining = activeDeliveries.filter((d) => d.id !== orderId);
+      setActiveDeliveries(remaining);
+      if (remaining.length === 0) {
+        setRiderPos(INITIAL_RIDER_POS);
+        setDutyStatus('AVAILABLE');
+        setDispatchTimer(30);
+      }
       toast.success('Delivery completed! Great job 🎉');
+      if (data.riderWallet) {
+        setWalletBalance(Number(data.riderWallet.walletBalance) || 0);
+        setIsBlocked(data.riderWallet.isBlocked === true);
+      }
+      void loadDashboard();
       void loadRoutes();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to mark delivered');
+    }
+  };
+
+  const openRemittanceModal = () => {
+    setRemittanceMethod('KBZPay');
+    setRemittanceAmount('');
+    setRemittanceOpen(true);
+  };
+
+  const submitRemittance = async () => {
+    if (!isBrowser()) return;
+    const riderId = window.localStorage.getItem('fooddash_session_id');
+    if (!riderId) {
+      toast.error('Please sign in again');
+      return;
+    }
+    const amount = Number(String(remittanceAmount).replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('Enter a valid deposit amount');
+      return;
+    }
+    setRemitting(true);
+    try {
+      const res = await fetch(clientApiUrl('/api/rider/remittance'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          riderId,
+          amount: Math.round(amount),
+          method: remittanceMethod,
+        }),
+      });
+      const data = await readJsonSafe(res);
+      if (!res.ok || !data?.success) {
+        throw new Error(String(data?.message || 'Remittance failed'));
+      }
+      setWalletBalance(Number(data.walletBalance) || 0);
+      setIsBlocked(data.isBlocked === true);
+      setRemittanceOpen(false);
+      setRemittanceAmount('');
+      toast.success(
+        data.isBlocked
+          ? `Deposited ${formatKyat(amount)}. Still below the -50,000 Ks limit.`
+          : `Deposited ${formatKyat(amount)} via ${remittanceMethod}. Account is active.`
+      );
+      void loadDashboard();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to deposit');
+    } finally {
+      setRemitting(false);
     }
   };
 
@@ -690,20 +861,38 @@ export default function RiderDashboardClient() {
     toast.success(`Navigating to ${stop.location} — ${stop.address}`);
   };
 
-  const todayEarnings = dashboardData?.todayStats?.todayEarnings || 0;
-  const todayTrips = dashboardData?.todayStats?.todayTrips || 0;
-  const todayDistance = dashboardData?.todayStats?.todayDistance || 0;
-  const todayTips = dashboardData?.todayStats?.todayTips || 0;
+  const weeklyEarnings = Number(dashboardData?.weeklyStats?.weeklyEarnings) || 0;
+  const weeklyTrips = Number(dashboardData?.weeklyStats?.weeklyTrips) || 0;
+  const weeklyDistance = Number(dashboardData?.weeklyStats?.weeklyDistance) || 0;
+  const weeklyTips = Number(dashboardData?.weeklyStats?.weeklyTips) || 0;
+  const weeklyChart = Array.isArray(dashboardData?.weeklyChartData)
+    ? dashboardData.weeklyChartData
+    : [];
+  const periodLabel = dashboardPeriodLabel(statsRange);
+  const summaryTitle = dashboardSummaryTitle(statsRange);
+  const chartMeta = dashboardChartMeta(statsRange);
+  const chartTitle = chartMeta.title;
+  const chartSubtitle = chartMeta.subtitle;
   const weeklyTotal =
-    dashboardData?.weeklyChartData?.reduce(
+    weeklyChart.reduce(
       (s: number, d: { earnings: number }) => s + (Number(d.earnings) || 0),
       0
     ) || 0;
 
-  const completedStops = routeStops.filter((s) => s.status === 'COMPLETED').length;
-  const currentStop = routeStops.find((s) => s.status === 'CURRENT');
-  const upcomingStops = routeStops.filter((s) => s.status === 'UPCOMING').length;
-  const foodStops = routeStops.filter((s) => s.type === 'FOOD').length;
+  const safeRouteStops = Array.isArray(routeStops) ? routeStops : [];
+  const completedStops = safeRouteStops.filter((s) => s.status === 'COMPLETED').length;
+  const currentStop = safeRouteStops.find((s) => s.status === 'CURRENT');
+  const upcomingStops = safeRouteStops.filter((s) => s.status === 'UPCOMING').length;
+  const foodStops = safeRouteStops.filter((s) => s.type === 'FOOD').length;
+
+  const chatDelivery =
+    activeDeliveries.find((d) => d.id === chatOrderId) ||
+    activeDeliveries.find((d) => d.customerId || d.restaurantId) ||
+    null;
+  const chatTargetId =
+    chatPeer === 'restaurant'
+      ? chatDelivery?.restaurantId || ''
+      : chatDelivery?.customerId || '';
 
   const dutyLabel =
     dutyStatus === 'OFFLINE' ? 'Go Online' : dutyStatus === 'AVAILABLE' ? 'Online' : 'Delivering';
@@ -820,7 +1009,7 @@ export default function RiderDashboardClient() {
               <NotificationBell
                 className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-800"
                 iconClassName="h-4 w-4"
-                showDot={Boolean(showDispatch && incomingDispatch) || Boolean(activeDelivery)}
+                showDot={Boolean(showDispatch && incomingDispatch) || activeDeliveries.length > 0}
                 items={
                   [
                     ...(showDispatch && incomingDispatch
@@ -829,20 +1018,19 @@ export default function RiderDashboardClient() {
                             id: incomingDispatch.id,
                             title: 'New dispatch request',
                             body: `${incomingDispatch.restaurant} · ${incomingDispatch.orderNumber}`,
-                            onClick: () => setActiveTab('home'),
+                            onClick: () => setActiveTab('routes'),
                           } satisfies BellNotificationItem,
                         ]
                       : []),
-                    ...(activeDelivery
-                      ? [
-                          {
-                            id: `active-${activeDelivery.id}`,
-                            title: 'Active delivery',
-                            body: `${activeDelivery.restaurant} → customer`,
-                            onClick: () => setActiveTab('home'),
-                          } satisfies BellNotificationItem,
-                        ]
-                      : []),
+                    ...activeDeliveries.map(
+                      (delivery) =>
+                        ({
+                          id: `active-${delivery.id}`,
+                          title: 'Active delivery',
+                          body: `${delivery.restaurant} → customer`,
+                          onClick: () => setActiveTab('routes'),
+                        }) satisfies BellNotificationItem
+                    ),
                   ] as BellNotificationItem[]
                 }
                 emptyLabel="No dispatch alerts"
@@ -867,226 +1055,108 @@ export default function RiderDashboardClient() {
             </div>
           </header>
 
+          {(dashboardError || routesError) && (
+            <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 sm:mx-6 lg:mx-8">
+              {dashboardError ? `Dashboard data unavailable: ${dashboardError}. Showing last known values.` : null}
+              {dashboardError && routesError ? ' ' : null}
+              {routesError ? `Route plan unavailable: ${routesError}.` : null}
+            </div>
+          )}
+
           {/* Content */}
           <main className="flex-1 overflow-y-auto scrollbar-hide px-4 pb-28 pt-4 sm:px-6 lg:px-8 lg:pb-10">
 
             {/* HOME */}
             {activeTab === 'home' && (
               <div className="mx-auto max-w-3xl space-y-5 lg:max-w-none">
-                <div className={`grid gap-5 ${activeDelivery || (showDispatch && dutyStatus === 'AVAILABLE') ? 'lg:grid-cols-5' : ''}`}>
-
-                  {/* Left / primary column — dispatch & active delivery */}
-                  <div className={`space-y-5 ${(activeDelivery || (showDispatch && dutyStatus === 'AVAILABLE')) ? 'lg:col-span-3' : ''}`}>
-
-                    {/* Dispatch request */}
-                    {showDispatch && incomingDispatch && (
-                      <div className="animate-slide-up">
-                        <div className="overflow-hidden rounded-2xl border border-rider/20 bg-white shadow-md shadow-rider/5">
-                          <div className="gradient-indigo relative px-5 py-4 sm:px-6">
-                            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.18),transparent_55%)]" />
-                            <div className="relative flex items-center justify-between gap-3">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/70">Incoming</p>
-                                <p className="mt-0.5 text-base font-bold text-white sm:text-lg">New Delivery Request</p>
-                                <p className="mt-0.5 text-xs text-white/75 sm:text-sm">
-                                  {incomingDispatch.restaurant} · {incomingDispatch.items} items · {incomingDispatch.orderNumber}
-                                </p>
-                              </div>
-                              <div className="relative h-14 w-14 shrink-0">
-                                <svg className="h-14 w-14 -rotate-90" viewBox="0 0 56 56">
-                                  <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="3.5" />
-                                  <circle
-                                    cx="28" cy="28" r="24" fill="none" stroke="white" strokeWidth="3.5"
-                                    strokeDasharray="150.8"
-                                    strokeDashoffset={150.8 * (1 - dispatchTimer / 30)}
-                                    strokeLinecap="round"
-                                    className="transition-all duration-1000"
-                                  />
-                                </svg>
-                                <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-white font-tabular">
-                                  {dispatchTimer}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="space-y-4 px-5 py-4 sm:px-6 sm:py-5">
-                            <div className="flex items-start gap-3">
-                              <div className="mt-1 flex shrink-0 flex-col items-center gap-1">
-                                <div className="h-2.5 w-2.5 rounded-full bg-success ring-4 ring-success/15" />
-                                <div className="h-8 w-px bg-gradient-to-b from-success/40 to-danger/40" />
-                                <div className="h-2.5 w-2.5 rounded-full bg-danger ring-4 ring-danger/15" />
-                              </div>
-                              <div className="flex-1 space-y-3">
-                                <div>
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pickup</p>
-                                  <p className="mt-0.5 text-sm font-semibold text-slate-900">{incomingDispatch.restaurantAddr}</p>
-                                  <p className="text-xs text-slate-500 font-tabular">{incomingDispatch.pickupDistance}</p>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Dropoff</p>
-                                  <p className="mt-0.5 text-sm font-semibold text-slate-900">{incomingDispatch.customerAddr}</p>
-                                  <p className="text-xs text-slate-500 font-tabular">{incomingDispatch.dropDistance} from pickup</p>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                              {[
-                                { label: 'Base Pay', value: formatKyat(incomingDispatch.estimatedEarnings), className: 'text-slate-900' },
-                                { label: 'Est. Tip', value: `+${formatKyat(incomingDispatch.estimatedTip)}`, className: 'text-success' },
-                                { label: 'Total Est.', value: formatKyat(incomingDispatch.estimatedEarnings + incomingDispatch.estimatedTip), className: 'text-rider' },
-                              ].map((cell) => (
-                                <div key={cell.label} className="rounded-xl border border-slate-100 bg-slate-50 py-3 text-center">
-                                  <p className="text-[10px] font-medium text-slate-400">{cell.label}</p>
-                                  <p className={`mt-1 text-sm font-bold font-tabular ${cell.className}`}>{cell.value}</p>
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="flex gap-3">
-                              <button
-                                type="button"
-                                onClick={declineDispatch}
-                                disabled={accepting}
-                                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50"
-                              >
-                                <X className="h-4 w-4" /> Decline
-                              </button>
-                              <button
-                                type="button"
-                                onClick={acceptDispatch}
-                                disabled={accepting}
-                                className="flex flex-1 items-center justify-center gap-2 rounded-xl gradient-indigo py-3 text-sm font-semibold text-white shadow-md shadow-rider/25 transition-all hover:opacity-95 active:scale-[0.98] disabled:opacity-50"
-                              >
-                                <CheckCircle className="h-4 w-4" /> {accepting ? 'Accepting…' : 'Accept'}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Active delivery */}
-                    {activeDelivery && (
-                      <div className="animate-fade-in">
-                        <div className="overflow-hidden rounded-2xl border border-success/20 bg-white shadow-md shadow-success/5">
-                          <div className="flex items-center gap-2.5 border-b border-success/10 bg-success/[0.06] px-5 py-3 sm:px-6">
-                            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-success/15">
-                              <Navigation className="h-3.5 w-3.5 text-success" />
-                            </span>
-                            <div>
-                              <p className="text-sm font-semibold text-success">Active Delivery</p>
-                              <p className="text-[11px] font-medium text-success/70 font-tabular">{activeDelivery.orderNumber}</p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-4 p-4 sm:p-5">
-                            {activeDeliveryStatus !== 'DELIVERED' &&
-                              (activeDeliveryStatus === 'ACCEPTED' ||
-                                activeDeliveryStatus === 'PICKED_UP') && (
-                              <>
-                                <div className="relative h-52 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner sm:h-64 lg:h-72">
-                                  <RiderRouteMap
-                                    riderCoords={
-                                      riderPos?.lat ? riderPos : MOCK_COORDS.rider
-                                    }
-                                    restaurantCoords={
-                                      activeDelivery.restaurantCoords?.lat
-                                        ? activeDelivery.restaurantCoords
-                                        : MOCK_COORDS.restaurant
-                                    }
-                                    customerCoords={
-                                      activeDelivery.customerCoords?.lat
-                                        ? activeDelivery.customerCoords
-                                        : MOCK_COORDS.customer
-                                    }
-                                    deliveryStatus={activeDeliveryStatus}
-                                  />
-                                </div>
-
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                  <ContactRow
-                                    label="Pickup from"
-                                    title={activeDelivery.restaurant}
-                                    subtitle={activeDelivery.restaurantAddr}
-                                  />
-                                  <ContactRow
-                                    label="Deliver to"
-                                    title={activeDelivery.customerName || 'Customer'}
-                                    subtitle={activeDelivery.customerAddr}
-                                    onMessage={
-                                      activeDelivery.customerId
-                                        ? () => setChatOpen(true)
-                                        : undefined
-                                    }
-                                  />
-                                </div>
-
-                                {activeDeliveryStatus === 'ACCEPTED' ? (
-                                  <button
-                                    type="button"
-                                    onClick={markPickedUp}
-                                    className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white transition hover:bg-green-700"
-                                  >
-                                    Mark as Picked Up
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={markDelivered}
-                                    className="w-full rounded-xl bg-customer py-3 font-semibold text-white transition hover:bg-customer/90"
-                                  >
-                                    Complete Delivery
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                {isBlocked && (
+                  <div className="flex items-start gap-3 rounded-2xl border border-red-300 bg-red-50 px-4 py-3.5 text-red-800 shadow-sm ring-1 ring-red-500/20">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+                    <p className="text-sm font-bold leading-snug">
+                      Account Suspended: Wallet limit reached (-50,000 Ks). Please remit cash to receive new orders.
+                    </p>
                   </div>
-
-                  {/* Summary — right column on desktop when delivery/dispatch shown */}
-                  <div className={`animate-fade-in ${(activeDelivery || (showDispatch && dutyStatus === 'AVAILABLE')) ? 'lg:col-span-2' : ''}`}>
-                    <div className="mb-3 flex items-center justify-between">
-                      <SectionLabel>Today&apos;s Summary</SectionLabel>
-                      <span className="text-[11px] font-medium text-slate-400 font-tabular">{todayTrips} trips</span>
+                )}
+                <div className="animate-fade-in">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <SectionLabel>{summaryTitle}</SectionLabel>
+                      <DashboardRangeToggle value={statsRange} onChange={setStatsRange} />
                     </div>
-                    <div className={`grid gap-3 ${
-                      (activeDelivery || (showDispatch && dutyStatus === 'AVAILABLE'))
-                        ? 'grid-cols-2 lg:grid-cols-1 xl:grid-cols-2'
-                        : 'grid-cols-2 lg:grid-cols-4'
-                    }`}>
+                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                       <MetricCard
                         label="Total Earnings"
-                        value={formatKyat(todayEarnings)}
-                        sub="Base + tips"
+                        value={formatKyat(weeklyEarnings)}
+                        sub={`${periodLabel} · base + tips`}
                         icon={Wallet}
                         accent="bg-success/10 text-success"
                       />
                       <MetricCard
-                        label="Trips Completed"
-                        value={String(todayTrips)}
-                        sub="Today"
+                        label={`Trips ${periodLabel}`}
+                        value={String(weeklyTrips)}
+                        sub={periodLabel}
                         icon={Bike}
                         accent="bg-rider/10 text-rider"
                       />
                       <MetricCard
                         label="Distance"
-                        value={`${Number(todayDistance).toFixed(1)} km`}
-                        sub="Total ridden"
+                        value={`${Number(weeklyDistance).toFixed(1)} km`}
+                        sub={`Ridden ${periodLabel.toLowerCase()}`}
                         icon={Route}
                         accent="bg-warning/10 text-warning"
                       />
                       <MetricCard
-                        label="Tips Earned"
-                        value={formatKyat(todayTips)}
+                        label={`Tips ${periodLabel}`}
+                        value={formatKyat(weeklyTips)}
                         sub="Customer tips"
                         icon={Star}
                         accent="bg-amber-400/15 text-amber-500"
                       />
+                    </div>
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+                  <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3.5 sm:px-5">
+                    <div>
+                      <SectionLabel>Wallet &amp; Remittance</SectionLabel>
+                      <p className="mt-1 text-sm font-medium text-slate-500">
+                        COD collections sit in your float until you deposit to the company
+                      </p>
+                    </div>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                        isBlocked
+                          ? 'border-red-200 bg-red-50 text-red-700'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      }`}
+                    >
+                      {isBlocked ? 'Suspended' : 'Active'}
+                    </span>
+                  </div>
+                  <div className="px-4 py-4 sm:px-5 sm:py-5">
+                    <div className="flex flex-wrap items-end justify-between gap-4">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                          Current balance
+                        </p>
+                        <p
+                          className={`mt-1 text-2xl font-bold tracking-tight font-tabular sm:text-3xl ${
+                            walletBalance < 0 ? 'text-red-600' : 'text-slate-900'
+                          }`}
+                        >
+                          {formatKyat(walletBalance)}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          Auto-block at {formatKyat(-50000)} · negative means you owe the platform
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={openRemittanceModal}
+                        className="inline-flex items-center gap-2 rounded-xl bg-rider px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-rider/90 active:scale-[0.98]"
+                      >
+                        <Building2 className="h-4 w-4" />
+                        Deposit to Company
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1098,6 +1168,198 @@ export default function RiderDashboardClient() {
             {/* ROUTES — Food daily plan */}
             {activeTab === 'routes' && (
               <div className="mx-auto max-w-3xl space-y-5 animate-fade-in lg:max-w-none">
+                {showDispatch && incomingDispatch && (
+                  <div className="animate-slide-up">
+                    <div className="overflow-hidden rounded-2xl border border-rider/20 bg-white shadow-md shadow-rider/5">
+                      <div className="gradient-indigo relative px-5 py-4 sm:px-6">
+                        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.18),transparent_55%)]" />
+                        <div className="relative flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/70">Incoming</p>
+                            <p className="mt-0.5 text-base font-bold text-white sm:text-lg">New Delivery Request</p>
+                            <p className="mt-0.5 text-xs text-white/75 sm:text-sm">
+                              {incomingDispatch.restaurant} · {incomingDispatch.items} items · {incomingDispatch.orderNumber}
+                            </p>
+                          </div>
+                          <div className="relative h-14 w-14 shrink-0">
+                            <svg className="h-14 w-14 -rotate-90" viewBox="0 0 56 56">
+                              <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="3.5" />
+                              <circle
+                                cx="28" cy="28" r="24" fill="none" stroke="white" strokeWidth="3.5"
+                                strokeDasharray="150.8"
+                                strokeDashoffset={150.8 * (1 - dispatchTimer / 30)}
+                                strokeLinecap="round"
+                                className="transition-all duration-1000"
+                              />
+                            </svg>
+                            <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-white font-tabular">
+                              {dispatchTimer}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4 px-5 py-4 sm:px-6 sm:py-5">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-1 flex shrink-0 flex-col items-center gap-1">
+                            <div className="h-2.5 w-2.5 rounded-full bg-success ring-4 ring-success/15" />
+                            <div className="h-8 w-px bg-gradient-to-b from-success/40 to-danger/40" />
+                            <div className="h-2.5 w-2.5 rounded-full bg-danger ring-4 ring-danger/15" />
+                          </div>
+                          <div className="flex-1 space-y-3">
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pickup</p>
+                              <p className="mt-0.5 text-sm font-semibold text-slate-900">{incomingDispatch.restaurantAddr}</p>
+                              <p className="text-xs text-slate-500 font-tabular">{incomingDispatch.pickupDistance}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Dropoff</p>
+                              <p className="mt-0.5 text-sm font-semibold text-slate-900">{incomingDispatch.customerAddr}</p>
+                              <p className="text-xs text-slate-500 font-tabular">{incomingDispatch.dropDistance} from pickup</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                          {[
+                            { label: 'Base Pay', value: formatKyat(incomingDispatch.estimatedEarnings), className: 'text-slate-900' },
+                            { label: 'Est. Tip', value: `+${formatKyat(incomingDispatch.estimatedTip)}`, className: 'text-success' },
+                            { label: 'Total Est.', value: formatKyat(incomingDispatch.estimatedEarnings + incomingDispatch.estimatedTip), className: 'text-rider' },
+                          ].map((cell) => (
+                            <div key={cell.label} className="rounded-xl border border-slate-100 bg-slate-50 py-3 text-center">
+                              <p className="text-[10px] font-medium text-slate-400">{cell.label}</p>
+                              <p className={`mt-1 text-sm font-bold font-tabular ${cell.className}`}>{cell.value}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="relative h-44 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner sm:h-56">
+                          <RiderRouteMap
+                            riderCoords={riderPos?.lat ? riderPos : MOCK_COORDS.rider}
+                            restaurantCoords={
+                              incomingDispatch.restaurantCoords?.lat
+                                ? incomingDispatch.restaurantCoords
+                                : MOCK_COORDS.restaurant
+                            }
+                            customerCoords={
+                              incomingDispatch.customerCoords?.lat
+                                ? incomingDispatch.customerCoords
+                                : MOCK_COORDS.customer
+                            }
+                            deliveryStatus="PREVIEW"
+                          />
+                        </div>
+
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={declineDispatch}
+                            disabled={accepting}
+                            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-600 shadow-sm transition-all hover:bg-slate-50 active:scale-[0.98] disabled:opacity-50"
+                          >
+                            <X className="h-4 w-4" /> Decline
+                          </button>
+                          <button
+                            type="button"
+                            onClick={acceptDispatch}
+                            disabled={accepting}
+                            className="flex flex-1 items-center justify-center gap-2 rounded-xl gradient-indigo py-3 text-sm font-semibold text-white shadow-md shadow-rider/25 transition-all hover:opacity-95 active:scale-[0.98] disabled:opacity-50"
+                          >
+                            <CheckCircle className="h-4 w-4" /> {accepting ? 'Accepting…' : 'Accept'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeDeliveries.map((delivery) => (
+                  <div key={delivery.id} className="animate-fade-in">
+                    <div className="overflow-hidden rounded-2xl border border-success/20 bg-white shadow-md shadow-success/5">
+                      <div className="flex items-center gap-2.5 border-b border-success/10 bg-success/[0.06] px-5 py-3 sm:px-6">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-success/15">
+                          <Navigation className="h-3.5 w-3.5 text-success" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-success">Active Delivery</p>
+                          <p className="text-[11px] font-medium text-success/70 font-tabular">
+                            {delivery.orderNumber}
+                            {delivery.deliveryStatus === 'PICKED_UP' ? ' · En route to customer' : ' · Head to pickup'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4 p-4 sm:p-5">
+                        <div className="relative h-52 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner sm:h-64 lg:h-72">
+                          <RiderRouteMap
+                            riderCoords={riderPos?.lat ? riderPos : MOCK_COORDS.rider}
+                            restaurantCoords={
+                              delivery.restaurantCoords?.lat
+                                ? delivery.restaurantCoords
+                                : MOCK_COORDS.restaurant
+                            }
+                            customerCoords={
+                              delivery.customerCoords?.lat
+                                ? delivery.customerCoords
+                                : MOCK_COORDS.customer
+                            }
+                            deliveryStatus={delivery.deliveryStatus}
+                          />
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <ContactRow
+                            label="Pickup from"
+                            title={delivery.restaurant}
+                            subtitle={delivery.restaurantAddr}
+                            onMessage={
+                              delivery.restaurantId
+                                ? () => {
+                                    setChatOrderId(delivery.id);
+                                    setChatPeer('restaurant');
+                                    setChatOpen(true);
+                                  }
+                                : undefined
+                            }
+                          />
+                          <ContactRow
+                            label="Deliver to"
+                            title={delivery.customerName || 'Customer'}
+                            subtitle={delivery.customerAddr}
+                            onMessage={
+                              delivery.customerId
+                                ? () => {
+                                    setChatOrderId(delivery.id);
+                                    setChatPeer('customer');
+                                    setChatOpen(true);
+                                  }
+                                : undefined
+                            }
+                          />
+                        </div>
+
+                        {delivery.deliveryStatus === 'ACCEPTED' ? (
+                          <button
+                            type="button"
+                            onClick={() => markPickedUp(delivery.id)}
+                            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white transition hover:bg-green-700"
+                          >
+                            Mark as Picked Up
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => markDelivered(delivery.id)}
+                            className="w-full rounded-xl bg-customer py-3 font-semibold text-white transition hover:bg-customer/90"
+                          >
+                            Complete Delivery
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <SectionLabel>Today&apos;s Optimized Route</SectionLabel>
@@ -1115,54 +1377,17 @@ export default function RiderDashboardClient() {
 
                 {/* Route map placeholder */}
                 <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-                  <div className="relative h-44 bg-gradient-to-br from-slate-100 via-indigo-50/60 to-teal-50/50 sm:h-56 lg:h-64">
-                    {/* Soft route path illustration */}
-                    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 400 200" preserveAspectRatio="none" aria-hidden>
-                      <path
-                        d="M40 150 C 80 140, 100 80, 140 90 S 200 150, 240 110 S 300 40, 360 55"
-                        fill="none"
-                        stroke="#C7D2FE"
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                        strokeDasharray="8 6"
-                      />
-                      <path
-                        d="M40 150 C 80 140, 100 80, 140 90 S 200 150, 240 110"
-                        fill="none"
-                        stroke="#6366F1"
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                      />
-                    </svg>
+                  <div className="relative h-44 bg-slate-100 sm:h-56 lg:h-64">
+                    <RiderIdleMap
+                      riderCoords={riderPos?.lat ? riderPos : INITIAL_RIDER_POS}
+                    />
 
-                    {/* Township chips along the route */}
-                    <div className="absolute left-[8%] bottom-[22%] flex flex-col items-center gap-1">
-                      <span className="h-2.5 w-2.5 rounded-full bg-success ring-4 ring-white shadow" />
-                      <span className="rounded-md bg-white/90 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 shadow-sm">Bahan</span>
-                    </div>
-                    <div className="absolute left-[28%] top-[38%] flex flex-col items-center gap-1">
-                      <span className="h-2.5 w-2.5 rounded-full bg-teal-500 ring-4 ring-white shadow" />
-                      <span className="rounded-md bg-white/90 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 shadow-sm">S. Dagon</span>
-                    </div>
-                    <div className="absolute left-[52%] bottom-[28%] flex flex-col items-center gap-1">
-                      <span className="h-3 w-3 rounded-full bg-rider ring-4 ring-white shadow status-pulse" />
-                      <span className="rounded-md bg-rider px-1.5 py-0.5 text-[9px] font-bold text-white shadow-sm">N. Okkalapa</span>
-                    </div>
-                    <div className="absolute right-[18%] top-[18%] flex flex-col items-center gap-1">
-                      <span className="h-2.5 w-2.5 rounded-full border-2 border-dashed border-slate-300 bg-white" />
-                      <span className="rounded-md bg-white/90 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400 shadow-sm">Yankin</span>
-                    </div>
-                    <div className="absolute right-[6%] top-[24%] flex flex-col items-center gap-1">
-                      <span className="h-2.5 w-2.5 rounded-full border-2 border-dashed border-slate-300 bg-white" />
-                      <span className="rounded-md bg-white/90 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400 shadow-sm">Hlaing</span>
-                    </div>
-
-                    <div className="absolute left-3 top-3 flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white/95 px-3 py-2 shadow-sm backdrop-blur-sm">
+                    <div className="absolute left-3 top-3 z-[1000] flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white/95 px-3 py-2 shadow-sm backdrop-blur-sm">
                       <MapIcon className="h-3.5 w-3.5 text-rider" />
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Route overview</p>
                         <p className="text-xs font-semibold text-slate-800">
-                          {completedStops}/{routeStops.length} stops done · {upcomingStops} left
+                          {completedStops}/{safeRouteStops.length} stops done · {upcomingStops} left
                         </p>
                       </div>
                     </div>
@@ -1210,11 +1435,11 @@ export default function RiderDashboardClient() {
                   <div className="mb-5 flex items-center justify-between">
                     <SectionLabel>Stop sequence</SectionLabel>
                     <span className="text-[11px] font-medium text-slate-400 font-tabular">
-                      {routeStops.length} stops today
+                      {safeRouteStops.length} stops today
                     </span>
                   </div>
 
-                  {routeStops.length === 0 ? (
+                  {safeRouteStops.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center">
                       <Route className="mx-auto h-8 w-8 text-slate-300" />
                       <p className="mt-3 text-sm font-semibold text-slate-600">No stops yet today</p>
@@ -1225,10 +1450,10 @@ export default function RiderDashboardClient() {
                   ) : null}
 
                   <ol className="relative space-y-0">
-                    {routeStops.map((stop, index) => {
+                    {safeRouteStops.map((stop, index) => {
                       const meta = ROUTE_TYPE_META[stop.type] || ROUTE_TYPE_META.FOOD;
                       const TypeIcon = meta.icon;
-                      const isLast = index === routeStops.length - 1;
+                      const isLast = index === safeRouteStops.length - 1;
                       const isCompleted = stop.status === 'COMPLETED';
                       const isCurrent = stop.status === 'CURRENT';
 
@@ -1334,26 +1559,26 @@ export default function RiderDashboardClient() {
             {/* EARNINGS */}
             {activeTab === 'earnings' && (
               <div className="mx-auto max-w-3xl space-y-5 animate-fade-in lg:max-w-none">
-                <SectionLabel>Earnings Overview</SectionLabel>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <SectionLabel>Earnings Overview</SectionLabel>
+                  <DashboardRangeToggle value={statsRange} onChange={setStatsRange} />
+                </div>
 
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <MetricCard label="Today" value={formatKyat(Number(todayEarnings))} icon={DollarSign} accent="bg-success/10 text-success" />
-                  <MetricCard label="This Week" value={formatKyat(Number(weeklyTotal))} icon={TrendingUp} accent="bg-rider/10 text-rider" />
-                  <MetricCard label="Tips Today" value={formatKyat(Number(todayTips))} icon={Star} accent="bg-amber-400/15 text-amber-500" />
-                  <MetricCard label="Trips Today" value={String(todayTrips)} icon={Bike} accent="bg-warning/10 text-warning" />
+                  <MetricCard label={periodLabel} value={formatKyat(Number(weeklyEarnings))} icon={DollarSign} accent="bg-success/10 text-success" />
+                  <MetricCard label="Chart Total" value={formatKyat(Number(weeklyTotal))} icon={TrendingUp} accent="bg-rider/10 text-rider" />
+                  <MetricCard label={`Tips ${periodLabel}`} value={formatKyat(Number(weeklyTips))} icon={Star} accent="bg-amber-400/15 text-amber-500" />
+                  <MetricCard label={`Trips ${periodLabel}`} value={String(weeklyTrips)} icon={Bike} accent="bg-warning/10 text-warning" />
                 </div>
 
                 <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
-                  <SectionLabel>Weekly Chart</SectionLabel>
+                  <SectionLabel>{chartTitle}</SectionLabel>
                   <div className="mt-4">
                     <EarningsChart
-                      data={dashboardData?.weeklyChartData || []}
-                      total={
-                        dashboardData?.weeklyChartData?.reduce(
-                          (s: number, d: any) => s + d.earnings,
-                          0
-                        ) || 0
-                      }
+                      data={weeklyChart}
+                      total={weeklyTotal}
+                      title={chartTitle}
+                      subtitle={chartSubtitle}
                     />
                   </div>
                 </div>
@@ -1365,9 +1590,9 @@ export default function RiderDashboardClient() {
               <div className="mx-auto max-w-3xl animate-fade-in lg:max-w-none">
                 <div className="mb-4 flex items-center justify-between">
                   <SectionLabel>Recent Trips</SectionLabel>
-                  <span className="text-[11px] font-medium text-slate-400 font-tabular">{todayTrips} trips today</span>
+                  <span className="text-[11px] font-medium text-slate-400 font-tabular">{weeklyTrips} trips this week</span>
                 </div>
-                {(dashboardData?.recentTrips || []).length === 0 ? (
+                {(Array.isArray(dashboardData?.recentTrips) ? dashboardData.recentTrips : []).length === 0 ? (
                   <div className="rounded-2xl border border-slate-200/80 bg-white px-6 py-12 text-center shadow-sm">
                     <p className="text-sm font-semibold text-slate-900">No completed trips yet</p>
                     <p className="mt-1 text-xs text-slate-400">
@@ -1376,12 +1601,12 @@ export default function RiderDashboardClient() {
                   </div>
                 ) : (
                   <div className="grid gap-2.5 lg:grid-cols-2">
-                    {(dashboardData?.recentTrips || []).map((trip: any) => {
+                    {(Array.isArray(dashboardData?.recentTrips) ? dashboardData.recentTrips : []).map((trip: any) => {
                       const tip = Number(trip.tipAmount) || 0;
                       const base =
                         trip.baseRiderFee != null
                           ? Number(trip.baseRiderFee) || 0
-                          : Number(trip.totals?.deliveryFee) || 0;
+                          : Math.round((Number(trip.totals?.deliveryFee) || 0) * 0.9);
                       const earnings = base + tip;
                       const distanceKm = Number(trip.distanceKm) || 0;
                       const durationMins = Number(trip.durationMins) || 0;
@@ -1612,17 +1837,25 @@ export default function RiderDashboardClient() {
         </div>
       </nav>
 
-      {activeDelivery && activeDelivery.customerId && sessionId && (
+      {chatTargetId && sessionId && chatDelivery && (
         <ChatWidget
           currentUserId={sessionId}
           currentUserRole="RIDER"
-          targetUserId={activeDelivery.customerId}
-          targetUserRole="CUSTOMER"
-          targetName={activeDelivery.customerName || 'Customer'}
-          orderId={activeDelivery.id}
+          targetUserId={chatTargetId}
+          targetUserRole={chatPeer === 'restaurant' ? 'RESTAURANT' : 'CUSTOMER'}
+          targetName={
+            chatPeer === 'restaurant'
+              ? chatDelivery.restaurant || 'Restaurant'
+              : chatDelivery.customerName || 'Customer'
+          }
+          orderId={chatDelivery.id}
           open={chatOpen}
           onOpenChange={setChatOpen}
-          quickReplies={[...RIDER_TO_CUSTOMER_QUICK_REPLIES]}
+          quickReplies={
+            chatPeer === 'restaurant'
+              ? [...RIDER_TO_RESTAURANT_QUICK_REPLIES]
+              : [...RIDER_TO_CUSTOMER_QUICK_REPLIES]
+          }
           accentClassName="bg-rider"
         />
       )}
@@ -1639,6 +1872,119 @@ export default function RiderDashboardClient() {
           showLauncher={false}
           accentClassName="bg-rider"
         />
+      )}
+
+      {remittanceOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+          onClick={() => {
+            if (!remitting) setRemittanceOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remittance-title"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div>
+                <p id="remittance-title" className="text-sm font-bold text-slate-900">
+                  Deposit to Company
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Remit COD cash via KBZPay or WavePay
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !remitting && setRemittanceOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  Payment method
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['KBZPay', 'WavePay'] as RemittanceMethod[]).map((method) => {
+                    const selected = remittanceMethod === method;
+                    return (
+                      <button
+                        key={method}
+                        type="button"
+                        onClick={() => setRemittanceMethod(method)}
+                        className={`rounded-xl border px-3 py-3 text-sm font-semibold transition-all ${
+                          selected
+                            ? 'border-rider/40 bg-rider/10 text-rider ring-1 ring-rider/20'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        {method}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  Amount
+                </p>
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {REMITTANCE_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setRemittanceAmount(String(preset))}
+                      className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${
+                        Number(remittanceAmount) === preset
+                          ? 'border-rider/40 bg-rider/10 text-rider'
+                          : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                      }`}
+                    >
+                      {formatKyat(preset)}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={remittanceAmount}
+                  onChange={(e) => setRemittanceAmount(e.target.value)}
+                  placeholder="Enter amount (Ks)"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-semibold text-slate-900 outline-none ring-rider/20 placeholder:font-medium placeholder:text-slate-400 focus:border-rider/40 focus:bg-white focus:ring-2"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 border-t border-slate-100 px-5 py-4">
+              <button
+                type="button"
+                disabled={remitting}
+                onClick={() => setRemittanceOpen(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={remitting}
+                onClick={() => void submitRemittance()}
+                className="flex-1 rounded-xl bg-rider py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-rider/90 disabled:opacity-60"
+              >
+                {remitting ? 'Depositing…' : 'Confirm deposit'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

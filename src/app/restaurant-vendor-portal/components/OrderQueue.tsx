@@ -153,6 +153,11 @@ export default function OrderQueue() {
         setOrders([]);
         return;
       }
+      params.set(
+        'status',
+        (viewMode === 'HISTORY' ? HISTORY_STATUSES : ACTIVE_STATUSES).join(',')
+      );
+      params.set('limit', '100');
 
       // Also match by restaurant name when both exist (older orders may only have name)
       const res = await fetch(`/api/orders?${params.toString()}`);
@@ -165,9 +170,10 @@ export default function OrderQueue() {
 
       // If filtered by id returned few/no results, also pull by name and merge
       if (sessionId && sessionName) {
-        const byNameRes = await fetch(
-          `/api/orders?restaurantName=${encodeURIComponent(sessionName)}`
-        );
+        const byNameParams = new URLSearchParams(params);
+        byNameParams.delete('restaurantId');
+        byNameParams.set('restaurantName', sessionName);
+        const byNameRes = await fetch(`/api/orders?${byNameParams.toString()}`);
         const byNameData = await byNameRes.json();
         if (byNameRes.ok && byNameData.success) {
           const byName = (Array.isArray(byNameData.orders) ? byNameData.orders : [])
@@ -197,7 +203,7 @@ export default function OrderQueue() {
     } finally {
       if (showSpinner) setIsLoading(false);
     }
-  }, [restaurantId, restaurantName, playNotification]);
+  }, [restaurantId, restaurantName, viewMode, playNotification]);
 
   useEffect(() => {
     if (!restaurantId && !restaurantName) {

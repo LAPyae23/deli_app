@@ -18,3 +18,9 @@ export const RIDER_TO_CUSTOMER_QUICK_REPLIES = [
   'I have arrived.',
   'Stuck in traffic.',
 ] as const;
+
+export const RIDER_TO_RESTAURANT_QUICK_REPLIES = [
+  "I'm here for pickup.",
+  'Which bag is this order?',
+  'On my way to the restaurant.',
+] as const;

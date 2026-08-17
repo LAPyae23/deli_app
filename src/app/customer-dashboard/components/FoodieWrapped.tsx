@@ -208,7 +208,7 @@ export default function FoodieWrapped() {
                   <Trophy className="mt-0.5 h-4 w-4 shrink-0 text-yellow-300" />
                   <p className="text-sm font-semibold leading-relaxed text-white/95">
                     {wrapped.percentileText ||
-                      'You are in the top 5% of Fast Food lovers in Sanchaung!'}
+                      'You are in the top 5% of Fast Food lovers in Yankin!'}
                   </p>
                 </div>
 

@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard, ShoppingBag, Store, Bike,
   Settings, LogOut, ChevronLeft, ChevronRight,
-  ShieldCheck, SlidersVertical, MapPin, TriangleAlert, MessageSquare,
-  Download, FileText, Loader2,
+  SlidersVertical, MapPin, TriangleAlert, MessageSquare,
+  Download, FileText, Loader2, Search, UserRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
@@ -13,6 +13,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import NotificationBell from '@/components/NotificationBell';
 import AdminKPIs from './AdminKPIs';
 import OrderVolumeChart from './OrderVolumeChart';
+import AdvancedAnalytics from './AdvancedAnalytics';
 import ApprovalQueue from './ApprovalQueue';
 import SystemConfig from './SystemConfig';
 import AdminInbox from './AdminInbox';
@@ -20,6 +21,8 @@ import AdminServiceZones from './AdminServiceZones';
 import MLAnalyticsDashboard from './MLAnalyticsDashboard';
 import RFMDashboard from './RFMDashboard';
 import DataSyncStatus from './DataSyncStatus';
+import UserLookup from './UserLookup';
+import ShareAppQR from '@/components/ShareAppQR';
 import { downloadExecutiveSummaryPdf } from '@/lib/executiveSummaryPdf';
 
 type AdminTab =
@@ -29,6 +32,7 @@ type AdminTab =
   | 'messages'
   | 'vendors'
   | 'riders'
+  | 'lookup'
   | 'analytics'
   | 'config';
 
@@ -53,6 +57,7 @@ const NAV_GROUPS: {
     items: [
       { key: 'anav-vendors', tab: 'vendors', icon: Store, label: 'Vendors', badge: null },
       { key: 'anav-riders', tab: 'riders', icon: Bike, label: 'Riders', badge: null },
+      { key: 'anav-lookup', tab: 'lookup', icon: Search, label: 'User Lookup', badge: null },
     ],
   },
   {
@@ -71,29 +76,101 @@ function AdminLiveClock() {
   useEffect(() => {
     setMounted(true);
     const format = () => {
-      const now = new Date();
       setClock(
-        `${now.toLocaleDateString(undefined, {
+        new Date().toLocaleDateString('en-US', {
           month: '2-digit',
           day: '2-digit',
           year: 'numeric',
-        })} · ${now.toLocaleTimeString(undefined, {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        })} UTC`
+        })
       );
     };
     format();
-    const interval = setInterval(format, 30_000);
+    const interval = setInterval(format, 60_000);
     return () => clearInterval(interval);
   }, []);
 
   if (!mounted) {
-    return <p className="text-xs text-muted-foreground font-medium min-w-[9rem]">&nbsp;</p>;
+    return (
+      <p className="text-sm font-semibold text-muted-foreground font-tabular min-w-[5.5rem]">
+        &nbsp;
+      </p>
+    );
   }
 
-  return <p className="text-xs text-muted-foreground font-medium">{clock}</p>;
+  return (
+    <p className="text-sm font-semibold text-foreground font-tabular whitespace-nowrap">
+      {clock}
+    </p>
+  );
+}
+
+function AdminProfileDropdown({
+  onProfileSettings,
+}: {
+  onProfileSettings: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Admin profile"
+        className="flex h-9 w-9 items-center justify-center rounded-full bg-admin text-xs font-bold text-primary-foreground shadow-sm ring-2 ring-admin/20 transition-opacity hover:opacity-90"
+      >
+        SA
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-48 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onProfileSettings();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            <UserRound className="h-4 w-4 text-muted-foreground" />
+            Profile Settings
+          </button>
+          <a
+            href="/"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger/10"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign Out
+          </a>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function AdminTabContent({
@@ -108,7 +185,13 @@ function AdminTabContent({
       return (
         <div className="mx-auto max-w-screen-2xl space-y-6 p-6 xl:p-8">
           <AdminKPIs data={adminStats?.kpis} />
-          <OrderVolumeChart data={adminStats?.hourlyData} />
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-4">
+            <div className="xl:col-span-3">
+              <OrderVolumeChart data={adminStats?.hourlyData} />
+            </div>
+            <ShareAppQR />
+          </div>
+          <AdvancedAnalytics />
           <MLAnalyticsDashboard />
           <RFMDashboard />
         </div>
@@ -135,13 +218,19 @@ function AdminTabContent({
     case 'vendors':
       return (
         <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
-          <ApprovalQueue />
+          <ApprovalQueue initialFilter="VENDOR" />
         </div>
       );
     case 'riders':
       return (
         <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
-          <ApprovalQueue />
+          <ApprovalQueue initialFilter="RIDER" />
+        </div>
+      );
+    case 'lookup':
+      return (
+        <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
+          <UserLookup />
         </div>
       );
     case 'analytics':
@@ -150,6 +239,7 @@ function AdminTabContent({
         <div className="mx-auto max-w-screen-2xl space-y-6 p-6 xl:p-8">
           <AdminKPIs data={adminStats?.kpis} />
           <OrderVolumeChart data={adminStats?.hourlyData} />
+          <AdvancedAnalytics />
           <MLAnalyticsDashboard />
           <RFMDashboard />
         </div>
@@ -189,7 +279,7 @@ export default function AdminLayout() {
 
     async function loadPending() {
       try {
-        const res = await fetch('/api/admin/approvals');
+        const res = await fetch('/api/admin/approvals?inbox=1');
         const data = await res.json();
         if (!cancelled && res.ok && data.success) {
           const approvals = Array.isArray(data.approvals) ? data.approvals : [];
@@ -221,7 +311,7 @@ export default function AdminLayout() {
     }
 
     loadPending();
-    const interval = setInterval(loadPending, 60_000);
+    const interval = setInterval(loadPending, 30_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -378,18 +468,18 @@ export default function AdminLayout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-card border-b border-border flex items-center px-6 gap-4 sticky top-0 z-30">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-admin" />
-            <span className="text-sm font-bold text-foreground">Super Admin Terminal</span>
-          </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-danger/10 border border-danger/20 rounded-lg">
-            <TriangleAlert className="w-3.5 h-3.5 text-danger" />
-            <span className="text-xs font-semibold text-danger">
-              {pendingApprovals} pending approvals
-            </span>
+        <header className="h-16 bg-card border-b border-border flex items-center justify-between px-6 sticky top-0 z-30">
+          <div className="flex items-center gap-4">
+            <AdminLiveClock />
+            <DataSyncStatus lastFetchTime={lastFetchTime} className="inline-flex" />
           </div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-danger/10 border border-danger/20 rounded-lg">
+              <TriangleAlert className="w-3.5 h-3.5 text-danger" />
+              <span className="text-xs font-semibold text-danger whitespace-nowrap">
+                {pendingApprovals} pending approvals
+              </span>
+            </div>
             <button
               type="button"
               onClick={handleExecutiveSummaryPdf}
@@ -422,20 +512,15 @@ export default function AdminLayout() {
               </span>
               <span className="sm:hidden">{exporting ? '…' : 'CSV'}</span>
             </button>
-            <DataSyncStatus lastFetchTime={lastFetchTime} />
-            <AdminLiveClock />
             <ThemeToggle className="relative rounded-lg p-2 transition-colors hover:bg-muted" />
             <NotificationBell
               showDot={pendingApprovals > 0}
               items={approvalNotifications}
               emptyLabel="No pending approvals"
             />
-            <div className="hidden cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted md:flex">
-              <div>
-                <p className="text-sm font-semibold leading-tight text-foreground">Ops Admin</p>
-                <p className="text-xs text-muted-foreground leading-tight">Super Admin</p>
-              </div>
-            </div>
+            <AdminProfileDropdown
+              onProfileSettings={() => setActiveTab('config')}
+            />
           </div>
         </header>
         <main className="flex-1 overflow-y-auto">

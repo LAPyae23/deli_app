@@ -74,6 +74,8 @@ export default function OrderConfirmationScreen({
         deliveryAddress,
         paymentMethod: selectedPayment,
         restaurantName,
+        restaurantId: items.find((i) => i.restaurantId)?.restaurantId,
+        tipAmount: Number(totals.tipAmount) || 0,
       });
 
       toast.success(`${result.orderNumber} placed — ETA ~${result.estimatedDeliveryMinutes} min`);

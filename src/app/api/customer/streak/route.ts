@@ -144,9 +144,11 @@ export async function GET(request: Request) {
       );
     }
 
-    const profile = await CustomerProfile.findOne({ customerId }).select(
-      'streakCount lastLoginDate hasStreakReward streakDiscountPercent streakVoucherCode'
-    );
+    const profile = await CustomerProfile.findOne({ customerId })
+      .select(
+        'streakCount lastLoginDate hasStreakReward streakDiscountPercent streakVoucherCode'
+      )
+      .lean();
 
     return NextResponse.json({
       success: true,

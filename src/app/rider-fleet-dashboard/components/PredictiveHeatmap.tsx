@@ -43,7 +43,7 @@ type HeatmapResponse = {
 };
 
 function scoreStyles(spot: Hotspot) {
-  if (spot.imbalance || spot.demandScore >= 80 || spot.status === 'Very High') {
+  if (spot.imbalance || spot.status === 'Very High') {
     return {
       card: 'border-red-400/60 bg-red-50 ring-red-500/25',
       bar: 'bg-red-500',
@@ -53,7 +53,7 @@ function scoreStyles(spot: Hotspot) {
       cta: 'bg-red-600 text-white',
     };
   }
-  if (spot.demandScore >= 55 || spot.status === 'High') {
+  if (spot.status === 'High') {
     return {
       card: 'border-orange-300/70 bg-orange-50/80 ring-orange-400/20',
       bar: 'bg-orange-500',
@@ -63,7 +63,7 @@ function scoreStyles(spot: Hotspot) {
       cta: 'bg-orange-500 text-white',
     };
   }
-  if (spot.demandScore >= 30 || spot.status === 'Moderate') {
+  if (spot.status === 'Moderate') {
     return {
       card: 'border-slate-200 bg-slate-50/80 ring-amber-400/15',
       bar: 'bg-amber-400',

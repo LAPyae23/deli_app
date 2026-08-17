@@ -181,9 +181,14 @@ interface LiveOrderTrackerProps {
   onDismiss?: () => void;
 }
 
+function notifyOrdersUpdated() {
+  window.dispatchEvent(new CustomEvent('fooddash:orders-updated'));
+}
+
 export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrderTrackerProps) {
   const [order, setOrder] = useState<TrackedOrder | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [etaSeconds, setEtaSeconds] = useState(0);
   const [riderLocation, setRiderLocation] = useState<LatLng>(FALLBACK_RESTAURANT);
   const [restaurantLogoUrl, setRestaurantLogoUrl] = useState<string | null>(null);
@@ -319,6 +324,34 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
     onDismiss?.();
   };
 
+  const cancelOrder = async () => {
+    if (!window.confirm('Are you sure you want to cancel this order?')) return;
+
+    setIsCancelling(true);
+    try {
+      const res = await fetch(`/api/orders/${activeOrderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'CANCELLED',
+          cancelReason: 'Cancelled by customer',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to cancel order');
+      }
+      toast.success('Order cancelled');
+      setOrder((prev) => (prev ? { ...prev, status: 'CANCELLED' } : prev));
+      notifyOrdersUpdated();
+      handleDismiss();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to cancel order');
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const submitReview = async () => {
     setIsSubmittingReview(true);
     try {
@@ -340,6 +373,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
 
   const status = (order?.status || 'PENDING').toUpperCase();
   const isPending = status === 'PENDING' || status === 'PLACED';
+  const canCancel = status === 'PENDING' || status === 'PREPARING';
   const isRejected = status === 'REJECTED' || status === 'CANCELLED';
   const activeStepIndex = statusToStepIndex(status);
   const showRider = status === 'OUT_FOR_DELIVERY' || status === 'READY' || status === 'PREPARING';
@@ -687,6 +721,26 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
             </div>
           )}
         </>
+      )}
+
+      {canCancel && (
+        <div className="border-t border-border px-4 py-4 sm:px-6">
+          <button
+            type="button"
+            disabled={isCancelling}
+            onClick={cancelOrder}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-danger px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {isCancelling ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cancelling…
+              </>
+            ) : (
+              'Cancel Order'
+            )}
+          </button>
+        </div>
       )}
     </div>
 

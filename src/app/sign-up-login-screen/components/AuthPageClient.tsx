@@ -9,6 +9,7 @@ import {
   ChevronRight, Copy, Check, Zap, Clock, Star, TrendingUp,
 } from 'lucide-react';
 import AppLogo from '@/components/ui/AppLogo';
+import ShareAppQR from '@/components/ShareAppQR';
 
 type UserRole = 'CUSTOMER' | 'RESTAURANT' | 'RIDER' | 'ADMIN';
 type AuthTab = 'login' | 'signup';
@@ -60,9 +61,9 @@ const ROLE_CONFIG = {
 } as const;
 
 const DEMO_CREDENTIALS = [
-  { role: 'CUSTOMER' as UserRole, email: 'customer.bahan.1@test.com', password: 'Test@2026', name: 'Bahan Customer' },
-  { role: 'RESTAURANT' as UserRole, email: 'restaurant.bahan.1@test.com', password: 'Test@2026', name: 'Bahan Inya Lake Cafe' },
-  { role: 'RIDER' as UserRole, email: 'rider.bahan.1@test.com', password: 'Test@2026', name: 'Bahan Rider (Online)' },
+  { role: 'CUSTOMER' as UserRole, email: 'customer.hlaing.1@test.com', password: 'Test@2026', name: 'Hlaing Customer' },
+  { role: 'RESTAURANT' as UserRole, email: 'restaurant.hlaing.1@test.com', password: 'Test@2026', name: 'Hlaing Restaurant' },
+  { role: 'RIDER' as UserRole, email: 'rider.hlaing.1@test.com', password: 'Test@2026', name: 'Hlaing Rider (Online)' },
   { role: 'ADMIN' as UserRole, email: 'ops.admin@fooddash.app', password: 'Admin#2026', name: 'Platform Admin' },
 ];
 
@@ -202,8 +203,8 @@ const onSignupSubmit = async (data: SignupForm) => {
       {/* Left Brand Panel */}
       <div className="hidden lg:flex lg:w-[480px] xl:w-[540px] flex-col relative overflow-hidden bg-foreground text-white">
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, var(--primary) 0%, transparent 60%), radial-gradient(circle at 80% 20%, var(--accent) 0%, transparent 50%)' }} />
-        <div className="relative z-10 flex flex-col h-full p-10">
-          <div className="flex items-center gap-3 mb-16">
+        <div className="relative z-10 flex flex-col h-full overflow-y-auto p-10">
+          <div className="flex items-center gap-3 mb-8">
             <AppLogo size={40} />
             <span className="text-2xl font-bold tracking-tight">FoodDash</span>
           </div>
@@ -212,10 +213,10 @@ const onSignupSubmit = async (data: SignupForm) => {
               Powering food delivery<br />
               <span className="text-primary">across every role.</span>
             </h1>
-            <p className="text-white/60 text-lg mb-12">
+            <p className="text-white/60 text-lg mb-8">
               One platform. Four dashboards. Real-time order intelligence from kitchen to doorstep.
             </p>
-            <div className="grid grid-cols-2 gap-4 mb-12">
+            <div className="grid grid-cols-2 gap-4 mb-8">
               {[
                 { icon: Zap, label: 'Real-time Orders', value: 'Live updates' },
                 { icon: Clock, label: 'Avg Delivery', value: '28 minutes' },
@@ -229,6 +230,7 @@ const onSignupSubmit = async (data: SignupForm) => {
                 </div>
               ))}
             </div>
+            <ShareAppQR variant="dark" className="mb-8 max-w-xs" />
           </div>
           <p className="text-white/30 text-sm">© 2026 FoodDash Platform Inc. All rights reserved.</p>
         </div>
@@ -380,7 +382,7 @@ const onSignupSubmit = async (data: SignupForm) => {
                       required: 'Required',
                       minLength: { value: 8, message: 'Minimum 8 characters' },
                       pattern: {
-                        value: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
+                        value: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/,
                         message: 'Must include uppercase, lowercase, number, and special character',
                       },
                     })}
@@ -456,6 +458,10 @@ const onSignupSubmit = async (data: SignupForm) => {
                 );
               })}
             </div>
+          </div>
+
+          <div className="mt-6 lg:hidden">
+            <ShareAppQR />
           </div>
         </div>
       </div>

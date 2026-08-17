@@ -7,16 +7,16 @@ import CustomerProfile from '@/models/CustomerProfile';
 import SystemConfig from '@/models/SystemConfig';
 
 const TOWNSHIPS = [
+  'Insein',
   'South Dagon',
+  'Hlaing',
+  'Kamaryut',
   'Bahan',
-  'Kyauktada',
-  'Pabedan',
-  'Latha',
-  'Lanmadaw',
-  'Sanchaung',
+  'Yankin',
+  'Mingaladon',
+  'North Dagon',
   'Mayangone',
-  'South Okkalapa',
-  'North Okkalapa',
+  'Thingangyun',
 ] as const;
 
 const DEFAULT_IMBALANCE_THRESHOLD = 2;
@@ -53,10 +53,37 @@ function zoneId(township: string) {
 }
 
 async function computeLiveZones(threshold: number) {
-  const [orders, restaurants, riders, customers] = await Promise.all([
-    Order.find({})
-      .select('deliveryAddress totals restaurantName status')
-      .lean(),
+  const [orderBuckets, restaurants, riders, customers] = await Promise.all([
+    Order.aggregate(
+      [
+        {
+          $group: {
+            _id: {
+              $ifNull: [
+                '$deliveryAddress.township',
+                { $ifNull: ['$totals.township', ''] },
+              ],
+            },
+            orderCount: { $sum: 1 },
+            activeOrders: {
+              $sum: {
+                $cond: [
+                  {
+                    $in: [
+                      '$status',
+                      ['PENDING', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'],
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ],
+      { allowDiskUse: true }
+    ) as Promise<Array<{ _id?: string; orderCount?: number; activeOrders?: number }>>,
     RestaurantProfile.find({})
       .select('township address description restaurantName')
       .lean(),
@@ -64,27 +91,21 @@ async function computeLiveZones(threshold: number) {
     CustomerProfile.find({}).select('township savedAddresses').lean(),
   ]);
 
+  const ordersByTownship = Object.fromEntries(
+    TOWNSHIPS.map((t) => [t, { orderCount: 0, activeOrders: 0 }])
+  ) as Record<(typeof TOWNSHIPS)[number], { orderCount: number; activeOrders: number }>;
+
+  for (const bucket of orderBuckets) {
+    const key = String(bucket._id || '');
+    const township = TOWNSHIPS.find((t) => matchTownship(key, t));
+    if (!township) continue;
+    ordersByTownship[township].orderCount += Number(bucket.orderCount) || 0;
+    ordersByTownship[township].activeOrders += Number(bucket.activeOrders) || 0;
+  }
+
   return TOWNSHIPS.map((township) => {
-    const orderInTownship = (o: (typeof orders)[number]) => {
-      const addr = o.deliveryAddress as
-        | { township?: string; detail?: string; address?: string }
-        | null;
-      const totals = o.totals as { township?: string } | null;
-      return (
-        matchTownship(addr?.township, township) ||
-        matchTownship(totals?.township, township) ||
-        matchTownship(addr?.detail, township) ||
-        matchTownship(addr?.address, township)
-      );
-    };
-
-    const orderCount = orders.filter(orderInTownship).length;
-
-    const activeOrders = orders.filter((o) => {
-      const status = String(o.status || '').toUpperCase();
-      const isActive = !['DELIVERED', 'CANCELLED', 'REJECTED'].includes(status);
-      return isActive && orderInTownship(o);
-    }).length;
+    const orderCount = ordersByTownship[township].orderCount;
+    const activeOrders = ordersByTownship[township].activeOrders;
 
     const restaurantCount = restaurants.filter(
       (r) =>

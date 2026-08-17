@@ -4,7 +4,7 @@ import User from '@/models/User';
 import bcrypt from 'bcryptjs';
 
 const PASSWORD_REGEX =
-  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
 
 export async function POST(request: Request) {
   try {
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
         {
           success: false,
           message:
-            'Password does not meet complexity requirements. Must include uppercase, lowercase, number, and special character (@$!%*?&), min 8 characters.',
+            'Password does not meet complexity requirements. Must include uppercase, lowercase, number, and special character (@$!%*?&#), min 8 characters.',
         },
         { status: 400 }
       );

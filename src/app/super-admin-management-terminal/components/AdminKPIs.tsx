@@ -7,6 +7,7 @@ import { formatKyat } from '@/lib/currency';
 export type AdminKpiData = {
   totalGMV?: number;
   totalOrders?: number;
+  activeOrders?: number;
   cancelledOrders?: number;
   avgPrepTime?: number;
   activeRiders?: number;
@@ -20,6 +21,7 @@ function formatCurrency(value: number) {
 function buildKpis(data?: AdminKpiData | null) {
   const totalGMV = Number(data?.totalGMV) || 0;
   const totalOrders = Number(data?.totalOrders) || 0;
+  const activeOrders = Number(data?.activeOrders) || 0;
   const cancelledOrders = Number(data?.cancelledOrders) || 0;
   const avgPrepTime = Number(data?.avgPrepTime) || 0;
   const activeRiders = Number(data?.activeRiders) || 0;
@@ -43,7 +45,10 @@ function buildKpis(data?: AdminKpiData | null) {
       id: 'kpi-active-orders',
       label: "Today's Orders",
       value: String(totalOrders),
-      subValue: 'Orders created today',
+      subValue:
+        activeOrders > 0
+          ? `${activeOrders} currently active`
+          : 'Orders created today',
       trend: totalOrders > 0 ? 'Live' : '—',
       trendUp: totalOrders > 0,
       icon: ShoppingBag,

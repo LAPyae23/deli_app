@@ -25,6 +25,7 @@ const MenuItemSchema = new mongoose.Schema(
     addons: [AddonSchema],
     image: { type: String, default: '' },
     imageAlt: { type: String, default: '' },
+    rating: { type: Number, default: null },
   },
   { timestamps: true }
 );

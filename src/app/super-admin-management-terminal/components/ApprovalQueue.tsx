@@ -1,8 +1,20 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Check, X, Eye, FileText, Store, Bike, Clock, TriangleAlert, Loader2 } from 'lucide-react';
+import {
+  Check,
+  X,
+  Store,
+  Bike,
+  Clock,
+  TriangleAlert,
+  Loader2,
+  BarChart3,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import RestaurantPerformancePanel, {
+  type PerformanceRestaurant,
+} from './RestaurantPerformancePanel';
 
 type ApprovalType = 'VENDOR' | 'RIDER';
 type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -22,6 +34,8 @@ interface ApprovalItem {
   vehicleType?: string;
   flagged?: boolean;
   township?: string;
+  address?: string;
+  storeStatus?: string;
 }
 
 const STATUS_STYLES: Record<ApprovalStatus, string> = {
@@ -49,10 +63,20 @@ function formatSubmittedAt(item: ApprovalItem) {
   }
 }
 
-export default function ApprovalQueue() {
+export default function ApprovalQueue({
+  initialFilter = 'ALL',
+}: {
+  initialFilter?: 'ALL' | ApprovalType;
+}) {
   const [items, setItems] = useState<ApprovalItem[]>([]);
-  const [filter, setFilter] = useState<'ALL' | ApprovalType>('ALL');
+  const [filter, setFilter] = useState<'ALL' | ApprovalType>(initialFilter);
   const [isLoading, setIsLoading] = useState(true);
+  const [statsRestaurant, setStatsRestaurant] =
+    useState<PerformanceRestaurant | null>(null);
+
+  useEffect(() => {
+    setFilter(initialFilter);
+  }, [initialFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,7 +157,13 @@ export default function ApprovalQueue() {
     <div className="bg-card border border-border rounded-xl overflow-hidden">
       <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
-          <h2 className="font-bold text-base text-foreground">Approval Queue</h2>
+          <h2 className="font-bold text-base text-foreground">
+            {initialFilter === 'VENDOR'
+              ? 'Vendors'
+              : initialFilter === 'RIDER'
+                ? 'Riders'
+                : 'Approval Queue'}
+          </h2>
           {pendingCount > 0 && (
             <span className="flex items-center gap-1 px-2 py-0.5 bg-warning/10 text-warning text-xs font-bold rounded-full">
               <Clock className="w-3 h-3" />
@@ -167,30 +197,23 @@ export default function ApprovalQueue() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                {[
-                  'Applicant',
-                  'Type',
-                  'Submitted By',
-                  'Date',
-                  'Documents',
-                  'Details',
-                  'Status',
-                  'Actions',
-                ].map((h) => (
-                  <th
-                    key={`ah-${h}`}
-                    className="px-4 py-3 text-left text-xs font-bold tracking-widest uppercase text-muted-foreground whitespace-nowrap"
-                  >
-                    {h}
-                  </th>
-                ))}
+                {['Applicant', 'Type', 'Submitted By', 'Date', 'Details', 'Status', 'Actions'].map(
+                  (h) => (
+                    <th
+                      key={`ah-${h}`}
+                      className="px-4 py-3 text-left text-xs font-bold tracking-widest uppercase text-muted-foreground whitespace-nowrap"
+                    >
+                      {h}
+                    </th>
+                  )
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filtered.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={7}
                     className="px-4 py-12 text-center text-sm text-muted-foreground"
                   >
                     No applications in this filter. Re-seed to generate pending Myanmar vendors/riders.
@@ -243,14 +266,6 @@ export default function ApprovalQueue() {
                     <td className="px-4 py-3.5 text-sm text-muted-foreground whitespace-nowrap font-tabular">
                       {formatSubmittedAt(item)}
                     </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="text-sm text-foreground/80 font-semibold font-tabular">
-                          {item.documents} docs
-                        </span>
-                      </div>
-                    </td>
                     <td className="px-4 py-3.5 text-sm text-muted-foreground whitespace-nowrap">
                       {item.type === 'VENDOR' ? (
                         <span className="font-tabular">{item.commissionRate}% commission</span>
@@ -265,13 +280,25 @@ export default function ApprovalQueue() {
                     </td>
                     <td className="px-4 py-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                          title="View documents"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
+                        {item.type === 'VENDOR' && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setStatsRestaurant({
+                                id,
+                                name: item.name,
+                                township: item.township,
+                                address: item.address,
+                                storeStatus: item.storeStatus,
+                              })
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-admin/25 bg-admin/10 px-2.5 py-1.5 text-xs font-semibold text-admin transition-colors hover:bg-admin/20"
+                            title="View restaurant performance"
+                          >
+                            <BarChart3 className="w-3.5 h-3.5" />
+                            View Stats
+                          </button>
+                        )}
                         {item.status === 'PENDING' && (
                           <>
                             <button
@@ -302,6 +329,13 @@ export default function ApprovalQueue() {
           </table>
         </div>
       )}
+
+      {statsRestaurant ? (
+        <RestaurantPerformancePanel
+          restaurant={statsRestaurant}
+          onClose={() => setStatsRestaurant(null)}
+        />
+      ) : null}
     </div>
   );
 }

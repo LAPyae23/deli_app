@@ -9,7 +9,12 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const restaurantId = searchParams.get('restaurantId');
     const query = restaurantId ? { restaurantId } : {};
-    const items = await MenuItem.find(query).sort({ createdAt: -1 });
+    const items = await MenuItem.find(query)
+      .select(
+        'restaurantId name category description price discountPrice prepTime stockQuantity isAvailable isPopular dietaryTags addons image imageAlt rating'
+      )
+      .sort({ createdAt: -1 })
+      .lean();
     return NextResponse.json({ success: true, items });
   } catch (error) {
     console.error('Menu GET error:', error);

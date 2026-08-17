@@ -16,7 +16,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const profile = await RestaurantProfile.findOne({ restaurantId });
+    const profile = await RestaurantProfile.findOne({ restaurantId }).lean();
     return NextResponse.json({ success: true, profile: profile || null });
   } catch (error) {
     console.error('Restaurant profile GET error:', error);

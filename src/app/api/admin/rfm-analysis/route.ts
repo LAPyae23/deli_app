@@ -1,32 +1,18 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
+import { cacheGetOrSet } from '@/lib/ttlCache';
 
 type RfmSegment = 'Top VIP' | 'Sleeping Beauty' | 'New/Normal';
 
-type LeanOrder = {
+type CustomerAgg = {
+  _id?: string;
   customerId?: string;
   customerName?: string;
-  createdAt?: Date;
-  status?: string;
-  totals?: { total?: number; totalAmount?: number } | null;
-  totalAmount?: number;
+  orderCount?: number;
+  monetary?: number;
+  lastOrderAt?: Date | string;
 };
-
-type CustomerAgg = {
-  customerId: string;
-  customerName: string;
-  orderCount: number;
-  monetary: number;
-  lastOrderAt: Date;
-};
-
-function orderMonetary(order: LeanOrder): number {
-  const fromTotals = Number(order.totals?.total ?? order.totals?.totalAmount);
-  if (Number.isFinite(fromTotals) && fromTotals > 0) return fromTotals;
-  const direct = Number(order.totalAmount);
-  return Number.isFinite(direct) && direct > 0 ? direct : 0;
-}
 
 function daysSince(date: Date, now = new Date()): number {
   const ms = now.getTime() - date.getTime();
@@ -44,49 +30,82 @@ function percentile(sorted: number[], p: number): number {
   return sorted[lo] * (1 - w) + sorted[hi] * w;
 }
 
+const gmvExpr = {
+  $convert: {
+    input: { $ifNull: ['$totals.total', { $ifNull: ['$totals.totalAmount', '$totalAmount'] }] },
+    to: 'double',
+    onError: 0,
+    onNull: 0,
+  },
+};
+
 export async function GET() {
   try {
     await dbConnect();
 
+    const payload = await cacheGetOrSet('rfm-analysis', 60_000, async () => {
     const now = new Date();
-    const orders = (await Order.find({})
-      .select('customerId customerName createdAt status totals')
-      .lean()) as LeanOrder[];
+    const customers = (await Order.aggregate(
+      [
+        {
+          $match: {
+            status: { $nin: ['CANCELLED', 'REJECTED'] },
+          },
+        },
+        {
+          $addFields: {
+            amount: gmvExpr,
+            customerKey: {
+              $let: {
+                vars: {
+                  cid: {
+                    $trim: {
+                      input: { $toString: { $ifNull: ['$customerId', ''] } },
+                    },
+                  },
+                  cname: {
+                    $trim: {
+                      input: { $ifNull: ['$customerName', 'Customer'] },
+                    },
+                  },
+                },
+                in: {
+                  $cond: [
+                    { $gt: [{ $strLenCP: '$$cid' }, 0] },
+                    '$$cid',
+                    {
+                      $concat: [
+                        'name:',
+                        { $toLower: { $ifNull: ['$$cname', 'Customer'] } },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$customerKey',
+            customerId: { $first: { $ifNull: ['$customerId', ''] } },
+            customerName: {
+              $top: {
+                sortBy: { createdAt: -1 },
+                output: { $ifNull: ['$customerName', 'Customer'] },
+              },
+            },
+            orderCount: { $sum: 1 },
+            monetary: { $sum: '$amount' },
+            lastOrderAt: { $max: '$createdAt' },
+          },
+        },
+      ],
+      { allowDiskUse: true }
+    )) as CustomerAgg[];
 
-    const byCustomer = new Map<string, CustomerAgg>();
-
-    for (const order of orders) {
-      const status = String(order.status || '').toUpperCase();
-      if (status === 'CANCELLED' || status === 'REJECTED') continue;
-
-      const customerId = String(order.customerId || '').trim();
-      const customerName = String(order.customerName || 'Customer').trim() || 'Customer';
-      const key = customerId || `name:${customerName.toLowerCase()}`;
-      const created = order.createdAt ? new Date(order.createdAt) : now;
-      const amount = orderMonetary(order);
-
-      const existing = byCustomer.get(key);
-      if (!existing) {
-        byCustomer.set(key, {
-          customerId: customerId || key,
-          customerName,
-          orderCount: 1,
-          monetary: amount,
-          lastOrderAt: created,
-        });
-      } else {
-        existing.orderCount += 1;
-        existing.monetary += amount;
-        if (created > existing.lastOrderAt) {
-          existing.lastOrderAt = created;
-          existing.customerName = customerName || existing.customerName;
-        }
-      }
-    }
-
-    const customers = Array.from(byCustomer.values());
     if (customers.length === 0) {
-      return NextResponse.json({
+      return {
         success: true,
         summary: {
           totalCustomers: 0,
@@ -97,25 +116,37 @@ export async function GET() {
           ],
         },
         customers: [],
+        topVips: [],
         sleepingBeauties: [],
+        newNormals: [],
         thresholds: null,
         generatedAt: now.toISOString(),
-      });
+      };
     }
 
-    const frequencies = customers.map((c) => c.orderCount).sort((a, b) => a - b);
-    const monetaries = customers.map((c) => c.monetary).sort((a, b) => a - b);
-    const recencies = customers
+    const normalized = customers.map((c) => {
+      const lastOrderAt = c.lastOrderAt ? new Date(c.lastOrderAt) : now;
+      return {
+        customerId: String(c.customerId || c._id || ''),
+        customerName: String(c.customerName || 'Customer').trim() || 'Customer',
+        orderCount: Number(c.orderCount) || 0,
+        monetary: Number(c.monetary) || 0,
+        lastOrderAt: Number.isNaN(lastOrderAt.getTime()) ? now : lastOrderAt,
+      };
+    });
+
+    const frequencies = normalized.map((c) => c.orderCount).sort((a, b) => a - b);
+    const monetaries = normalized.map((c) => c.monetary).sort((a, b) => a - b);
+    const recencies = normalized
       .map((c) => daysSince(c.lastOrderAt, now))
       .sort((a, b) => a - b);
 
-    // High F / High M ≈ top half; Low R ≈ fresher than median; High R ≈ older than ~60th pct
     const highF = Math.max(2, percentile(frequencies, 0.55));
     const highM = Math.max(1, percentile(monetaries, 0.55));
     const lowR = percentile(recencies, 0.45);
     const highR = Math.max(lowR + 1, percentile(recencies, 0.6));
 
-    const scored = customers.map((c) => {
+    const scored = normalized.map((c) => {
       const recencyDays = daysSince(c.lastOrderAt, now);
       const frequency = c.orderCount;
       const monetary = Math.round(c.monetary * 100) / 100;
@@ -168,15 +199,19 @@ export async function GET() {
     }));
 
     const sleepingBeauties = scored.filter((c) => c.segment === 'Sleeping Beauty');
+    const topVips = scored.filter((c) => c.segment === 'Top VIP');
+    const newNormals = scored.filter((c) => c.segment === 'New/Normal');
 
-    return NextResponse.json({
+    return {
       success: true,
       summary: {
         totalCustomers,
         segments,
       },
       customers: scored,
+      topVips,
       sleepingBeauties,
+      newNormals,
       thresholds: {
         highFrequency: highF,
         highMonetary: Math.round(highM * 100) / 100,
@@ -184,7 +219,10 @@ export async function GET() {
         highRecencyDays: Math.round(highR * 10) / 10,
       },
       generatedAt: now.toISOString(),
+    };
     });
+
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('Admin RFM analysis GET error:', error);
     return NextResponse.json(

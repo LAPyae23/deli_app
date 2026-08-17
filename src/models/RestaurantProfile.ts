@@ -8,6 +8,8 @@ const RestaurantProfileSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     logoImage: { type: String, default: '' },
     coverImage: { type: String, default: '' },
+    rating: { type: Number, default: null },
+    reviewCount: { type: Number, default: 0 },
     address: { type: String, default: '' },
     location: {
       lat: { type: Number, default: 16.8409 },
