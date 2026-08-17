@@ -5,7 +5,9 @@ import { ArrowLeft, Star, Clock, Bike, Plus, UtensilsCrossed, Loader2, Lock } fr
 import { toast } from 'sonner';
 import AppImage from '@/components/ui/AppImage';
 import { formatMMK } from '@/lib/currency';
+import { formatRating } from '@/lib/formatRating';
 import MenuItemDetail from './MenuItemDetail';
+import RestaurantReviews from './RestaurantReviews';
 import type { CartItem, MenuItem as SharedMenuItem, Restaurant } from '../types';
 
 type PastOrder = {
@@ -27,7 +29,7 @@ interface MenuItem {
   image: string;
   imageAlt: string;
   restaurantId: string;
-  rating: number;
+  rating: number | null;
   popular?: boolean;
   isAvailable?: boolean;
   stockQuantity?: number;
@@ -54,7 +56,9 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
   const fetchMenuItems = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/menu');
+      const res = await fetch(
+        `/api/menu?restaurantId=${encodeURIComponent(restaurant.id)}`
+      );
       const data = await res.json();
 
       if (!res.ok || !data.success) {
@@ -78,7 +82,10 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
           image: String(raw.image || ''),
           imageAlt: String(raw.imageAlt || raw.name || 'Menu item'),
           restaurantId: String(raw.restaurantId || ''),
-          rating: raw.isPopular ? 4.8 : 4.5,
+          rating: (() => {
+            const n = Number(raw.rating);
+            return Number.isFinite(n) && n > 0 ? n : null;
+          })(),
           popular: Boolean(raw.isPopular),
           isAvailable,
           stockQuantity: Number.isFinite(stockQuantity) ? stockQuantity : undefined,
@@ -213,6 +220,7 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
       unitPrice,
       quantity,
       restaurantName: restaurant.name,
+      restaurantId: restaurant.id,
       image: item.image,
       imageAlt: item.imageAlt,
     });
@@ -241,9 +249,10 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
           <div className="mb-6 overflow-hidden rounded-2xl border border-border bg-card">
             <div className="relative h-44 sm:h-56 md:h-64">
               <AppImage
-                src={restaurant.image}
+                src={restaurant.coverImage || restaurant.image}
                 alt={restaurant.imageAlt}
                 fill
+                fallbackSrc="/assets/images/no_image.png"
                 className="object-cover"
                 sizes="(max-width: 1024px) 100vw, 70vw"
                 priority
@@ -257,6 +266,18 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
                 <ArrowLeft className="h-4 w-4" />
                 Back to Shop
               </button>
+              {restaurant.logoImage ? (
+                <div className="absolute bottom-16 right-4 h-14 w-14 overflow-hidden rounded-xl border-2 border-white/90 bg-card shadow-md sm:bottom-20 sm:right-5">
+                  <AppImage
+                    src={restaurant.logoImage}
+                    alt={`${restaurant.name} logo`}
+                    fill
+                    fallbackSrc="/assets/images/no_image.png"
+                    className="object-cover"
+                    sizes="56px"
+                  />
+                </div>
+              ) : null}
               <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
                 <h1 className="mb-1 text-2xl font-bold text-white drop-shadow-sm sm:text-3xl">
                   {restaurant.name}
@@ -265,8 +286,12 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
                 <div className="flex flex-wrap items-center gap-3 text-xs text-white/90 sm:text-sm">
                   <span className="flex items-center gap-1 font-semibold">
                     <Star className="h-3.5 w-3.5 fill-warning text-warning" />
-                    {restaurant.rating}
-                    <span className="font-normal opacity-80">({restaurant.reviews.toLocaleString()})</span>
+                    {formatRating(restaurant.rating)}
+                    {restaurant.reviews > 0 && (
+                      <span className="font-normal opacity-80">
+                        ({restaurant.reviews.toLocaleString()})
+                      </span>
+                    )}
                   </span>
                   <span className="flex items-center gap-1">
                     <Clock className="h-3.5 w-3.5" />
@@ -351,18 +376,14 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
                           </div>
 
                           <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl bg-muted sm:h-28 sm:w-28">
-                            {item.image ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={item.image}
-                                alt={item.imageAlt || item.name}
-                                className="absolute inset-0 h-full w-full object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                                No image
-                              </div>
-                            )}
+                            <AppImage
+                              src={item.image}
+                              alt={item.imageAlt || item.name}
+                              fill
+                              fallbackSrc="/assets/images/no_image.png"
+                              className="object-cover"
+                              sizes="112px"
+                            />
                             {outOfStock ? (
                               <span className="absolute inset-0 flex items-center justify-center bg-foreground/50">
                                 <span className="rounded-full bg-card px-2 py-1 text-[10px] font-bold text-foreground">
@@ -484,6 +505,11 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
               )}
             </div>
           )}
+
+          <RestaurantReviews
+            restaurantId={restaurant.id}
+            refreshKey={reviewSubmitted ? 'submitted' : restaurant.id}
+          />
         </>
       )}
     </section>

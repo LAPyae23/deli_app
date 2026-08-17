@@ -22,15 +22,26 @@ type NotificationBellProps = {
 export default function NotificationBell({
   className = 'relative rounded-lg p-2 transition-colors hover:bg-muted',
   iconClassName = 'h-5 w-5 text-muted-foreground',
-  showDot = false,
   emptyLabel = 'No new notifications',
   align = 'right',
   items = [],
 }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
+  const [bellPop, setBellPop] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef(items.length);
   const hasItems = items.length > 0;
-  const shouldShowDot = showDot || hasItems;
+
+  useEffect(() => {
+    const next = items.length;
+    if (next > prevCountRef.current) {
+      setBellPop(true);
+      const timeout = window.setTimeout(() => setBellPop(false), 400);
+      prevCountRef.current = next;
+      return () => window.clearTimeout(timeout);
+    }
+    prevCountRef.current = next;
+  }, [items.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -66,9 +77,15 @@ export default function NotificationBell({
         }}
         className={className}
       >
-        <Bell className={iconClassName} />
-        {shouldShowDot && (
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card" />
+        <Bell
+          className={`${iconClassName} origin-center transition-transform duration-200 ${
+            bellPop ? 'scale-125' : 'scale-100'
+          }`}
+        />
+        {items.length > 0 && (
+          <span className="absolute -top-1.5 -right-1.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white ring-2 ring-card animate-bounce">
+            {items.length}
+          </span>
         )}
       </button>
 

@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
 import RiderProfile from '@/models/RiderProfile';
+import {
+  applyCodWalletDeduction,
+  isCodPayment,
+  isRiderBlocked,
+} from '@/lib/riderWallet';
+import { pricingFromOrder } from '@/lib/orderPricing';
 
 export async function GET(
   _request: Request,
@@ -18,7 +24,7 @@ export async function GET(
       );
     }
 
-    const order = await Order.findById(id);
+    const order = await Order.findById(id).lean();
     if (!order) {
       return NextResponse.json(
         { success: false, message: 'Order not found' },
@@ -64,7 +70,9 @@ export async function PATCH(
       updateData.travelMins = Number(body.travelMins);
     }
     if (body.riderId != null) {
-      updateData.riderId = String(body.riderId);
+      const nextRiderId = String(body.riderId).trim();
+      updateData.riderId = nextRiderId;
+      updateData.unassigned = nextRiderId.length === 0;
     }
     if (body.riderName != null) {
       updateData.riderName = String(body.riderName);
@@ -101,28 +109,53 @@ export async function PATCH(
       const duration = Number(body.durationMins);
       if (Number.isFinite(duration)) updateData.durationMins = duration;
     }
+    if (body.cancelReason != null) {
+      updateData.cancelReason = String(body.cancelReason);
+    }
 
-    // Offline riders cannot accept / be assigned to dispatches
+    // Blocked riders cannot be assigned any new orders
     const nextStatus = String(body.status || updateData.status || '').toUpperCase();
-    if (body.riderId != null && nextStatus === 'OUT_FOR_DELIVERY') {
+    if (body.riderId != null) {
       const riderId = String(body.riderId);
-      const rider = await RiderProfile.findOne({ riderId }).select('status').lean();
-      if (!rider || String(rider.status) !== 'Online') {
+      if (await isRiderBlocked(riderId)) {
         return NextResponse.json(
           {
             success: false,
-            message: 'Rider is offline and cannot accept dispatches',
+            message: 'Rider is blocked due to outstanding COD wallet debt',
           },
           { status: 403 }
         );
       }
+      // Offline riders cannot accept / be assigned to dispatches
+      if (nextStatus === 'OUT_FOR_DELIVERY') {
+        const rider = await RiderProfile.findOne({ riderId }).select('status').lean();
+        if (!rider || String(rider.status) !== 'Online') {
+          return NextResponse.json(
+            {
+              success: false,
+              message: 'Rider is offline and cannot accept dispatches',
+            },
+            { status: 403 }
+          );
+        }
+      }
     }
 
-    if (
-      String(body.status || '').toUpperCase() === 'DELIVERED' ||
-      updateData.status === 'DELIVERED'
-    ) {
+    const existingOrder = await Order.findById(id).lean();
+    if (!existingOrder) {
+      return NextResponse.json(
+        { success: false, message: 'Order not found' },
+        { status: 404 }
+      );
+    }
+
+    const wasDelivered = String(existingOrder.status || '').toUpperCase() === 'DELIVERED';
+    const becomingDelivered = nextStatus === 'DELIVERED' && !wasDelivered;
+    const pricing = pricingFromOrder(existingOrder);
+
+    if (becomingDelivered) {
       updateData.completedAt = new Date();
+      updateData.baseRiderFee = pricing.riderEarning;
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -145,7 +178,30 @@ export async function PATCH(
       );
     }
 
-    return NextResponse.json({ success: true, order: updatedOrder });
+    let wallet: Awaited<ReturnType<typeof applyCodWalletDeduction>> = null;
+    if (becomingDelivered && isCodPayment(updatedOrder.paymentMethod)) {
+      const riderId = String(updatedOrder.riderId || existingOrder.riderId || '');
+      const owedAmount = pricing.owedAmount;
+      if (riderId && owedAmount > 0) {
+        wallet = await applyCodWalletDeduction(riderId, owedAmount);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      order: updatedOrder,
+      ...(wallet
+        ? {
+            riderWallet: {
+              deducted: wallet.deducted,
+              owedAmount: pricing.owedAmount,
+              riderEarning: pricing.riderEarning,
+              walletBalance: wallet.walletBalance,
+              isBlocked: wallet.isBlocked,
+            },
+          }
+        : {}),
+    });
   } catch (error) {
     console.error('Order PATCH error:', error);
     return NextResponse.json(

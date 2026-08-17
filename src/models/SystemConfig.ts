@@ -16,7 +16,10 @@ const SurgeZoneStateSchema = new mongoose.Schema(
 const SystemConfigSchema = new mongoose.Schema(
   {
     globalCommission: { type: Number, default: 18 },
-    platformFee: { type: Number, default: 0.5 },
+    restaurantCommission: { type: Number, default: 30 },
+    riderCommission: { type: Number, default: 10 },
+    /** Customer Discover: max restaurant distance from delivery address */
+    maxDeliveryRadiusKm: { type: Number, default: 7 },
     autoSurge: { type: Boolean, default: true },
     /** Activate surge when activeOrders / availableRiders >= this ratio */
     surgeImbalanceThreshold: { type: Number, default: 2 },

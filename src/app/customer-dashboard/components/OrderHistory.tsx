@@ -124,8 +124,13 @@ export default function OrderHistory({ onRateRestaurant }: OrderHistoryProps) {
     }
 
     fetchOrders();
+    const onOrdersUpdated = () => {
+      void fetchOrders();
+    };
+    window.addEventListener('fooddash:orders-updated', onOrdersUpdated);
     return () => {
       cancelled = true;
+      window.removeEventListener('fooddash:orders-updated', onOrdersUpdated);
     };
   }, []);
 

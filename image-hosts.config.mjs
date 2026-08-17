@@ -9,6 +9,10 @@ export const imageHosts = [
     },
     {
         protocol: 'https',
+        hostname: 'ui-avatars.com',
+    },
+    {
+        protocol: 'https',
         hostname: 'images.pexels.com',
     },
     {
@@ -18,5 +22,9 @@ export const imageHosts = [
     {
         protocol: 'https',
         hostname: 'img.rocket.new',
+    },
+    {
+        protocol: 'https',
+        hostname: 'picsum.photos',
     },
 ];

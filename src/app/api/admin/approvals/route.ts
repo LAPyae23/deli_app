@@ -4,15 +4,63 @@ import RestaurantProfile from '@/models/RestaurantProfile';
 import RiderProfile from '@/models/RiderProfile';
 import User from '@/models/User';
 
-export async function GET() {
+const PROFILE_SELECT =
+  'restaurantId restaurantName approvalStatus township address storeStatus createdAt';
+const RIDER_SELECT =
+  'riderId name approvalStatus vehicleType vehicle township createdAt';
+
+export async function GET(request: Request) {
   try {
     await dbConnect();
+    const { searchParams } = new URL(request.url);
+    const inbox = searchParams.get('inbox') === '1';
+
+    if (inbox) {
+      const [pendingRestaurants, pendingRiders] = await Promise.all([
+        RestaurantProfile.find({ approvalStatus: 'PENDING' })
+          .select('restaurantId restaurantName township createdAt')
+          .sort({ createdAt: -1 })
+          .limit(8)
+          .lean(),
+        RiderProfile.find({ approvalStatus: 'PENDING' })
+          .select('riderId name township createdAt')
+          .sort({ createdAt: -1 })
+          .limit(8)
+          .lean(),
+      ]);
+
+      const approvals = [
+        ...pendingRestaurants.map((r) => ({
+          id: String(r.restaurantId),
+          _id: String(r.restaurantId),
+          type: 'VENDOR' as const,
+          name: r.restaurantName || 'Restaurant',
+          township: r.township || '',
+          status: 'PENDING',
+        })),
+        ...pendingRiders.map((r) => ({
+          id: String(r.riderId),
+          _id: String(r.riderId),
+          type: 'RIDER' as const,
+          name: r.name || 'Rider',
+          township: r.township || '',
+          status: 'PENDING',
+        })),
+      ];
+
+      return NextResponse.json({
+        success: true,
+        approvals,
+        pendingCount: approvals.length,
+      });
+    }
 
     const [restaurants, riders, users] = await Promise.all([
       RestaurantProfile.find({})
+        .select(PROFILE_SELECT)
         .sort({ createdAt: -1 })
         .lean(),
-      RiderProfile.find({}).sort({ createdAt: -1 }).lean(),
+      RiderProfile.find({}).select(RIDER_SELECT).sort({ createdAt: -1 }).lean(),
       User.find({ role: { $in: ['RESTAURANT', 'RIDER'] } })
         .select('email role')
         .lean(),
@@ -34,9 +82,11 @@ export async function GET() {
       commissionRate: 18,
       flagged: false,
       township: r.township || '',
+      address: r.address || '',
+      storeStatus: r.storeStatus || 'OPEN',
       createdAt: r.createdAt,
       submittedAt: undefined,
-      profileImage: r.logoImage || '',
+      profileImage: '',
     }));
 
     const riderApprovals = riders.map((r) => ({
@@ -53,10 +103,9 @@ export async function GET() {
       township: r.township || '',
       createdAt: r.createdAt,
       submittedAt: undefined,
-      profileImage: r.profileImage || '',
+      profileImage: '',
     }));
 
-    // Prefer pending first, then newest
     const approvals = [...vendorApprovals, ...riderApprovals].sort((a, b) => {
       const rank = (s: string) => (s === 'PENDING' ? 0 : s === 'REJECTED' ? 1 : 2);
       const diff = rank(a.status) - rank(b.status);

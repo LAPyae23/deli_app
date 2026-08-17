@@ -3,10 +3,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, ShoppingBag, DollarSign, Percent, Clock } from 'lucide-react';
 import { formatKyat } from '@/lib/currency';
+import {
+  dashboardPeriodLabel,
+  dashboardSummaryTitle,
+  type DashboardRange,
+} from '@/lib/dashboardRange';
+import DashboardRangeToggle from '@/components/DashboardRangeToggle';
 
 export default function RevenueKPIs() {
   const [stats, setStats] = useState<any>(null);
   const [updatedAt, setUpdatedAt] = useState('');
+  const [statsRange, setStatsRange] = useState<DashboardRange>('7d');
+  const periodLabel = dashboardPeriodLabel(statsRange);
+  const summaryTitle = dashboardSummaryTitle(statsRange);
 
   useEffect(() => {
     let cancelled = false;
@@ -21,12 +30,13 @@ export default function RevenueKPIs() {
         const params = new URLSearchParams();
         if (restaurantName) params.set('restaurantName', restaurantName);
         if (restaurantId) params.set('restaurantId', restaurantId);
+        params.set('range', statsRange);
 
         const res = await fetch(`/api/restaurant/stats?${params.toString()}`);
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load');
         if (!cancelled) {
-          setStats(data.stats);
+          setStats(data.weeklyStats || data.stats);
           setUpdatedAt(new Date().toLocaleTimeString());
         }
       } catch (error) {
@@ -40,18 +50,18 @@ export default function RevenueKPIs() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [statsRange]);
 
   const kpis = useMemo(() => {
     const revenue = Number(stats?.revenue) || 0;
-    const net = revenue * 0.82;
+    const periodLower = periodLabel.toLowerCase();
 
     return [
       {
         id: 'kpi-revenue',
-        label: "Today's Revenue",
+        label: `Net Revenue ${periodLabel}`,
         value: formatKyat(revenue),
-        subValue: `Net: ${formatKyat(net)} after 18% commission`,
+        subValue: 'After commission deducted',
         trend: revenue > 0 ? 'Live' : '—',
         trendUp: revenue > 0,
         icon: DollarSign,
@@ -60,9 +70,9 @@ export default function RevenueKPIs() {
       },
       {
         id: 'kpi-orders',
-        label: 'Orders Completed',
+        label: `Orders ${periodLabel}`,
         value: String(stats?.completedOrders || 0),
-        subValue: `${stats?.totalOrders || 0} total today`,
+        subValue: `${stats?.totalOrders || 0} total ${periodLower}`,
         trend: (stats?.completedOrders || 0) > 0 ? 'Live' : '—',
         trendUp: (stats?.completedOrders || 0) > 0,
         icon: ShoppingBag,
@@ -93,15 +103,18 @@ export default function RevenueKPIs() {
         iconColor: 'text-admin',
       },
     ];
-  }, [stats]);
+  }, [stats, periodLabel]);
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground" suppressHydrationWarning>
-          {updatedAt ? `Updated ${updatedAt}` : 'Loading…'}
-        </p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-bold text-foreground">{summaryTitle}</h1>
+        <div className="flex items-center gap-3">
+          <DashboardRangeToggle value={statsRange} onChange={setStatsRange} />
+          <p className="text-sm text-muted-foreground" suppressHydrationWarning>
+            {updatedAt ? `Updated ${updatedAt}` : 'Loading…'}
+          </p>
+        </div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi) => (

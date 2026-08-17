@@ -28,18 +28,24 @@ function CustomTooltip({ active, payload, label }: TooltipProps) {
 export default function EarningsChart({
   data,
   total,
+  title = 'Weekly Earnings',
+  subtitle = 'Last 7 days',
 }: {
   data: { day: string; earnings: number }[];
   total: number;
+  title?: string;
+  subtitle?: string;
 }) {
   const todayIndex = (new Date().getDay() + 6) % 7;
+  const highlightIndex = data.length === 7 ? todayIndex : data.length - 1;
+  const barSize = data.length > 10 ? 12 : data.length > 7 ? 18 : 24;
 
   return (
     <div>
       <div className="mb-4 flex items-end justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold tracking-tight text-slate-900">Weekly Earnings</p>
-          <p className="mt-0.5 text-[11px] text-slate-400">Last 7 days</p>
+          <p className="text-sm font-semibold tracking-tight text-slate-900">{title}</p>
+          <p className="mt-0.5 text-[11px] text-slate-400">{subtitle}</p>
         </div>
         <div className="text-right">
           <p className="text-lg font-bold leading-none text-success font-tabular sm:text-xl">
@@ -50,7 +56,7 @@ export default function EarningsChart({
       </div>
 
       <ResponsiveContainer width="100%" height={160}>
-        <BarChart data={data} barSize={24} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+        <BarChart data={data} barSize={barSize} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
           <CartesianGrid vertical={false} stroke="#E2E8F0" strokeDasharray="4 4" />
           <XAxis
             dataKey="day"
@@ -65,7 +71,7 @@ export default function EarningsChart({
             {data.map((_, index) => (
               <Cell
                 key={`cell-earn-${index}`}
-                fill={index === todayIndex ? 'var(--rider)' : 'rgba(99,102,241,0.18)'}
+                fill={index === highlightIndex ? 'var(--rider)' : 'rgba(99,102,241,0.18)'}
               />
             ))}
           </Bar>

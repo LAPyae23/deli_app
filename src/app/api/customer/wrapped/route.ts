@@ -24,16 +24,16 @@ type LeanOrder = {
 };
 
 const TOWNSHIPS = [
+  'Insein',
   'South Dagon',
+  'Hlaing',
+  'Kamaryut',
   'Bahan',
-  'Kyauktada',
-  'Pabedan',
-  'Latha',
-  'Lanmadaw',
-  'Sanchaung',
+  'Yankin',
+  'Mingaladon',
+  'North Dagon',
   'Mayangone',
-  'South Okkalapa',
-  'North Okkalapa',
+  'Thingangyun',
 ] as const;
 
 function orderTotal(order: LeanOrder): number {
@@ -81,6 +81,7 @@ export async function GET(request: Request) {
     const orders = (await Order.find({ customerId })
       .select('customerId customerName restaurantId restaurantName status createdAt deliveryAddress totals items')
       .sort({ createdAt: -1 })
+      .limit(100)
       .lean()) as LeanOrder[];
 
     const monthOrders = orders.filter((o) => {
@@ -163,7 +164,7 @@ export async function GET(request: Request) {
       }
     }
 
-    township = township || 'Sanchaung';
+    township = township || 'Yankin';
     const percentile = mockPercentile(`${customerId}:${topCategory.name}:${township}`);
     const percentileText = `You are in the top ${percentile}% of ${topCategory.name} lovers in ${township}!`;
 

@@ -19,12 +19,10 @@ import {
 import { toast } from 'sonner';
 import AppImage from '@/components/ui/AppImage';
 import { formatMMK } from '@/lib/currency';
+import { calculateOrderPricing, DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
 import OrderReceiptModal, { type PaymentMethod } from './OrderReceiptModal';
 import { placeOrder } from '../services/orderService';
 import type { CartItem, DeliveryAddressInfo, OrderTotals } from '../types';
-
-/** Display USD menu prices as Myanmar Kyat */
-export { toMMK, formatMMK } from '@/lib/currency';
 
 interface CartPanelProps {
   items: CartItem[];
@@ -80,6 +78,44 @@ export default function CartPanel({
   const [recommendations, setRecommendations] = useState<BasketRec[]>([]);
   const [recsLoading, setRecsLoading] = useState(false);
   const [openExplanationId, setOpenExplanationId] = useState<string | null>(null);
+  const [promoInput, setPromoInput] = useState('');
+  const [promoApplied, setPromoApplied] = useState(false);
+  const [appliedPercent, setAppliedPercent] = useState(0);
+  const [appliedCode, setAppliedCode] = useState('');
+  const [grantedPromo, setGrantedPromo] = useState<{
+    hasPromo: boolean;
+    promoCode: string;
+    promoDiscountPercent: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPromo() {
+      try {
+        const customerId = localStorage.getItem('fooddash_session_id');
+        if (!customerId) return;
+        const res = await fetch(
+          `/api/customer/profile?customerId=${encodeURIComponent(customerId)}`
+        );
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+        const profile = data.profile || {};
+        setGrantedPromo({
+          hasPromo: Boolean(profile.hasPromo),
+          promoCode: String(profile.promoCode || ''),
+          promoDiscountPercent: Number(profile.promoDiscountPercent) || 0,
+        });
+      } catch {
+        if (!cancelled) setGrantedPromo(null);
+      }
+    }
+
+    loadPromo();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setSelectedItems((prev) => {
@@ -159,6 +195,7 @@ export default function CartPanel({
       unitPrice: Number(rec.unitPrice ?? rec.price) || 0,
       quantity: 1,
       restaurantName: rec.restaurantName || restaurantName || items[0]?.restaurantName,
+      restaurantId: items[0]?.restaurantId,
       image: rec.image,
       imageAlt: rec.name,
     });
@@ -181,10 +218,53 @@ export default function CartPanel({
   }, [items, restaurantName]);
 
   const subtotal = selectedCartItems.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
-  const deliveryFee = selectedCartItems.length > 0 ? 1.99 : 0;
-  const platformFee = selectedCartItems.length > 0 ? 0.5 : 0;
-  const tax = (subtotal + deliveryFee + platformFee) * 0.08;
-  const total = subtotal + deliveryFee + platformFee + tax;
+  const pricing = calculateOrderPricing({
+    subtotal,
+    deliveryFee: selectedCartItems.length > 0 ? DEFAULT_DELIVERY_FEE_KS : 0,
+  });
+  const deliveryFee = selectedCartItems.length > 0 ? pricing.deliveryFee : 0;
+  const platformFee = selectedCartItems.length > 0 ? pricing.platformFee : 0;
+  const tax = selectedCartItems.length > 0 ? pricing.tax : 0;
+  const discountAmount = promoApplied
+    ? Math.max(0, Math.round(subtotal * (appliedPercent / 100)))
+    : 0;
+  const total =
+    selectedCartItems.length > 0
+      ? Math.max(0, subtotal + tax + deliveryFee - discountAmount)
+      : 0;
+
+  const applyCartPromo = (code: string, percent: number) => {
+    const clean = String(code || '').trim();
+    const pct = Number(percent) || 0;
+    if (!clean || pct <= 0) {
+      toast.error('Invalid promo code');
+      return;
+    }
+    setPromoInput(clean);
+    setAppliedCode(clean);
+    setAppliedPercent(pct);
+    setPromoApplied(true);
+    toast.success(`${pct}% off applied`);
+  };
+
+  const tryApplyCartPromo = () => {
+    const entered = promoInput.trim().toUpperCase();
+    const expected = String(grantedPromo?.promoCode || '').trim().toUpperCase();
+    const percent = Number(grantedPromo?.promoDiscountPercent) || 0;
+    if (
+      grantedPromo?.hasPromo &&
+      expected &&
+      entered === expected &&
+      percent > 0
+    ) {
+      applyCartPromo(grantedPromo.promoCode, percent);
+      return;
+    }
+    toast.error('Invalid promo code');
+    setPromoApplied(false);
+    setAppliedPercent(0);
+    setAppliedCode('');
+  };
 
   const allSelected = items.length > 0 && selectedItems.length === items.length;
   const cartCount = items.reduce((s, i) => s + i.quantity, 0);
@@ -218,17 +298,27 @@ export default function CartPanel({
     setReceiptOpen(true);
   };
 
-  const handlePlaceOrder = async (): Promise<string | null> => {
+  const handlePlaceOrder = async (
+    tipAmount = 0,
+    promo?: { discount: number; promoApplied: boolean; promoCodeUsed?: string }
+  ): Promise<string | null> => {
     if (selectedCartItems.length === 0) return null;
+
+    const safeTip = Math.max(0, Math.round(Number(tipAmount) || 0));
+    const discountAmount = Math.max(0, Math.round(Number(promo?.discount) || 0));
+    const promoApplied = Boolean(promo?.promoApplied && discountAmount > 0);
+    const promoCodeUsed = String(promo?.promoCodeUsed || '').trim();
 
     const totals: OrderTotals = {
       subtotal,
       deliveryFee,
       platformFee,
-      discount: 0,
+      discount: discountAmount,
       tax,
-      total,
-      promoApplied: false,
+      total: Math.max(0, subtotal + tax + deliveryFee - discountAmount + safeTip),
+      promoApplied,
+      tipAmount: safeTip,
+      promoCodeUsed,
     };
 
     setIsPlacing(true);
@@ -243,6 +333,10 @@ export default function CartPanel({
         paymentMethod,
         restaurantName:
           restaurantName || selectedCartItems[0]?.restaurantName,
+        restaurantId: selectedCartItems[0]?.restaurantId,
+        tipAmount: safeTip,
+        discount: discountAmount,
+        promoCodeUsed,
       });
 
       const purchasedIds = selectedCartItems.map((i) => i.id);
@@ -251,6 +345,17 @@ export default function CartPanel({
 
       toast.success(`Order ${result.orderNumber} placed successfully`);
       setPlacedOrderId(result.orderId);
+      setPromoApplied(false);
+      setAppliedPercent(0);
+      setAppliedCode('');
+      setPromoInput('');
+      if (promoCodeUsed) {
+        setGrantedPromo((prev) =>
+          prev
+            ? { ...prev, hasPromo: false, promoCode: '', promoDiscountPercent: 0 }
+            : prev
+        );
+      }
       return result.orderNumber;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to place order');
@@ -273,7 +378,7 @@ export default function CartPanel({
           >
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
-          <h2 className="font-bold text-base text-foreground">စျေးဝယ်ခြင်း</h2>
+          <h2 className="font-bold text-base text-foreground">Cart</h2>
           <button
             type="button"
             className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground"
@@ -289,7 +394,7 @@ export default function CartPanel({
             <ShoppingCart className="w-14 h-14 text-border mb-3" />
             <p className="font-semibold text-foreground mb-1">Cart is empty</p>
             <p className="text-sm text-muted-foreground mb-4">
-              Discover မှ အစားအစာ ထည့်ပါ
+              Discover restaurants and add items to your cart to place an order.
             </p>
             {onGoDiscover && (
               <button type="button" onClick={onGoDiscover} className="btn-primary px-5 py-2.5">
@@ -394,23 +499,14 @@ export default function CartPanel({
 
                             <div className="relative w-20 h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                               {item.image ? (
-                                item.image.startsWith('data:') ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={item.image}
-                                    alt={item.imageAlt || item.name}
-                                    className="absolute inset-0 h-full w-full object-cover"
-                                  />
-                                ) : (
                                   <AppImage
                                     src={item.image}
                                     alt={item.imageAlt || item.name}
                                     fill
+                                    fallbackSrc="/assets/images/no_image.png"
                                     className="object-cover"
                                     sizes="80px"
-                                    unoptimized
                                   />
-                                )
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center">
                                   <ShoppingCart className="w-6 h-6 text-border" />
@@ -442,7 +538,7 @@ export default function CartPanel({
                                 className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-customer"
                                 onClick={() => {
                                   const note = window.prompt(
-                                    'မှတ်ချက်ရေးရန် (Leave a note)',
+                                    'Leave a note',
                                     itemNotes[item.id] || item.note || ''
                                   );
                                   if (note !== null) {
@@ -452,7 +548,7 @@ export default function CartPanel({
                               >
                                 <Pencil className="w-3 h-3" />
                                 <span className="truncate">
-                                  {itemNotes[item.id] || item.note || 'မှတ်ချက်ရေးရန်'}
+                                  {itemNotes[item.id] || item.note || 'Add a note'}
                                 </span>
                               </button>
 
@@ -525,9 +621,9 @@ export default function CartPanel({
                               src={rec.image}
                               alt={rec.name}
                               fill
+                              fallbackSrc="/assets/images/no_image.png"
                               className="object-cover"
                               sizes="96px"
-                              unoptimized
                             />
                           ) : (
                             <div className="flex h-full items-center justify-center">
@@ -625,6 +721,44 @@ export default function CartPanel({
               </button>
 
               <div className="border-t border-border bg-white px-3 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+                {grantedPromo?.hasPromo && grantedPromo.promoCode && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyCartPromo(
+                        grantedPromo.promoCode,
+                        grantedPromo.promoDiscountPercent
+                      )
+                    }
+                    className="mb-2 w-full rounded-lg border border-fuchsia-300 bg-gradient-to-r from-fuchsia-50 to-amber-50 px-3 py-2 text-left text-[11px] font-bold text-fuchsia-950"
+                  >
+                    🎉 You have a voucher: {grantedPromo.promoCode} (
+                    {grantedPromo.promoDiscountPercent}% off) - Click to apply
+                  </button>
+                )}
+                <div className="mb-2 flex gap-2">
+                  <input
+                    type="text"
+                    value={promoInput}
+                    onChange={(e) => setPromoInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        tryApplyCartPromo();
+                      }
+                    }}
+                    placeholder="Promo Code"
+                    className="input-field min-w-0 flex-1 py-2 text-xs uppercase"
+                    autoCapitalize="characters"
+                  />
+                  <button
+                    type="button"
+                    onClick={tryApplyCartPromo}
+                    className="flex-shrink-0 rounded-lg border border-border bg-muted px-3 py-2 text-xs font-bold text-foreground"
+                  >
+                    Apply
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -638,11 +772,16 @@ export default function CartPanel({
                       <Circle className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                     )}
                     <span className="text-xs font-semibold text-foreground whitespace-nowrap">
-                      အားလုံးရွေးချယ်ရန်
+                      Select All
                     </span>
                   </button>
 
                   <div className="flex-1 min-w-0 text-right px-1">
+                    {discountAmount > 0 && (
+                      <p className="text-[10px] font-semibold text-danger leading-none mb-0.5">
+                        - {formatMMK(discountAmount)}
+                      </p>
+                    )}
                     <p className="text-[10px] text-muted-foreground leading-none mb-0.5">Total</p>
                     <p className="text-sm font-bold font-tabular text-customer leading-tight truncate">
                       {formatMMK(total)}
@@ -655,7 +794,7 @@ export default function CartPanel({
                     disabled={selectedItems.length === 0}
                     className="flex-shrink-0 px-3.5 py-2.5 rounded-lg text-xs font-bold text-white bg-customer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
                   >
-                    ဈေးနှုန်းတွက်ချက်ခြင်း
+                    Checkout
                   </button>
                 </div>
               </div>
@@ -685,6 +824,8 @@ export default function CartPanel({
           restaurantName || selectedCartItems[0]?.restaurantName
         }
         formatMoney={formatMMK}
+        initialPromoCode={promoApplied ? appliedCode || promoInput : ''}
+        initialPromoPercent={promoApplied ? appliedPercent : 0}
         savedAddresses={savedAddresses}
         onDeliveryAddressChange={onDeliveryAddressChange}
         onOpenAddressPicker={onOpenAddressPicker}

@@ -1,15 +1,19 @@
 /**
- * FoodDash Phase 3 — Yangon Township Seeder
+ * FoodDash — Yangon Township Seeder (supply / demand imbalance)
  *
- * 10 townships · realistic coords · unique picsum images ·
- * 1-to-1 User ↔ Profile linking for every seeded account ·
- * Offline riders pinned to static township coordinates
+ * 10 townships · bbox lat/lng · intentional rider shortage in Insein ·
+ * rider surplus in South Dagon · 1-to-1 User ↔ Profile · wipe-then-seed
  *
  * Run: npm run seed
  *
  * Passwords:
  *   ADMIN  → Admin#2026  (ops.admin@fooddash.app — exactly one)
  *   others → Test@2026
+ *
+ * Email pattern:
+ *   customer.{slug}.{n}@test.com
+ *   restaurant.{slug}.{n}@test.com
+ *   rider.{slug}.{n}@test.com
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -17,6 +21,8 @@ import { resolve } from 'path';
 import mongoose from 'mongoose';
 import { faker } from '@faker-js/faker';
 import bcrypt from 'bcryptjs';
+import { calculateOrderPricing } from '../src/lib/orderPricing';
+import { getDishImage } from '../src/lib/dishImages';
 
 function loadEnvFile(filePath: string) {
   if (!existsSync(filePath)) return;
@@ -47,26 +53,33 @@ const USER_PASSWORD = 'Test@2026';
 const ADMIN_PASSWORD = 'Admin#2026';
 const ADMIN_EMAIL = 'ops.admin@fooddash.app';
 
-/* ── 10 Yangon townships (approx. real centers) ─────────────── */
+/* ── Exactly 10 Yangon townships (bbox + role counts) ───────── */
 
 type TownshipKey =
+  | 'Insein'
   | 'South Dagon'
+  | 'Hlaing'
+  | 'Kamaryut'
   | 'Bahan'
-  | 'Kyauktada'
-  | 'Pabedan'
-  | 'Latha'
-  | 'Lanmadaw'
-  | 'Sanchaung'
+  | 'Yankin'
+  | 'Mingaladon'
+  | 'North Dagon'
   | 'Mayangone'
-  | 'South Okkalapa'
-  | 'North Okkalapa';
+  | 'Thingangyun';
+
+type DemandTier = 'HIGH' | 'LOW' | 'NORMAL' | 'MINOR';
 
 type TownshipConfig = {
   name: TownshipKey;
   slug: string;
+  bounds: { lat: [number, number]; lng: [number, number] };
   coords: { lat: number; lng: number };
-  restaurants: string[];
+  customers: number;
+  restaurants: number;
+  riders: number;
+  featuredNames: string[];
   orderWeight: number;
+  demandTier: DemandTier;
 };
 
 type LoginCredential = {
@@ -79,76 +92,157 @@ type LoginCredential = {
   userId: string;
 };
 
+const RESTAURANT_SUFFIXES = [
+  'Market BBQ',
+  'Tea House',
+  'Mohinga Stall',
+  'Kyay Oh House',
+  'Shan Noodle',
+  'Seafood',
+  'Shwe Kaung',
+  'Hot Pot',
+  'Family Kitchen',
+  'Street Noodles',
+  'Night Market Grill',
+  'Garden Cafe',
+  'Junction Kitchen',
+  'Rice House',
+  'BBQ Corner',
+  'Pinlon Tea Shop',
+  'Lake View Kitchen',
+  'Station Tea Shop',
+];
+
 const TOWNSHIPS: TownshipConfig[] = [
+  {
+    name: 'Insein',
+    slug: 'insein',
+    bounds: { lat: [16.88, 16.91], lng: [96.08, 96.11] },
+    coords: { lat: 16.895, lng: 96.095 },
+    customers: 80,
+    restaurants: 40,
+    riders: 5,
+    featuredNames: [
+      'Insein Market BBQ',
+      'Insein Station Tea House',
+      'Thamaing Junction Grill',
+      'Insein Fresh Mohinga',
+      'Aung Mingalar Kyay Oh Insein',
+    ],
+    orderWeight: 4.5,
+    demandTier: 'HIGH',
+  },
   {
     name: 'South Dagon',
     slug: 'southdagon',
-    coords: { lat: 16.8512, lng: 96.2128 },
-    restaurants: ['South Dagon Kyay Oh House', 'Yuzana Garden Tea Shop'],
-    orderWeight: 1.1,
+    bounds: { lat: [16.81, 16.84], lng: [96.2, 96.24] },
+    coords: { lat: 16.825, lng: 96.22 },
+    customers: 15,
+    restaurants: 10,
+    riders: 35,
+    featuredNames: [
+      'South Dagon Kyay Oh House',
+      'Yuzana Garden Tea Shop',
+      'South Dagon Night Market BBQ',
+    ],
+    orderWeight: 0.35,
+    demandTier: 'LOW',
+  },
+  {
+    name: 'Hlaing',
+    slug: 'hlaing',
+    bounds: { lat: [16.83, 16.86], lng: [96.11, 96.13] },
+    coords: { lat: 16.845, lng: 96.12 },
+    customers: 30,
+    restaurants: 20,
+    riders: 15,
+    featuredNames: ['Hledan Centre Food', 'Hlaing University Cafe', 'Hlaing Township Shan Noodle'],
+    orderWeight: 1.2,
+    demandTier: 'NORMAL',
+  },
+  {
+    name: 'Kamaryut',
+    slug: 'kamaryut',
+    bounds: { lat: [16.82, 16.84], lng: [96.12, 96.14] },
+    coords: { lat: 16.83, lng: 96.13 },
+    customers: 30,
+    restaurants: 20,
+    riders: 15,
+    featuredNames: ['Kamaryut Junction Noodles', 'Hledan Kamaryut Grill', 'Kamaryut Tea Leaf'],
+    orderWeight: 1.2,
+    demandTier: 'NORMAL',
   },
   {
     name: 'Bahan',
     slug: 'bahan',
-    coords: { lat: 16.8156, lng: 96.1536 },
-    restaurants: ['Bahan Inya Lake Cafe', 'Sayar San Road Grill'],
-    orderWeight: 1.6,
-  },
-  {
-    name: 'Kyauktada',
-    slug: 'kyauktada',
-    coords: { lat: 16.7738, lng: 96.1621 },
-    restaurants: ['Sule Pagoda Mohinga', 'Kyauktada Business Lunch'],
-    orderWeight: 1.4,
-  },
-  {
-    name: 'Pabedan',
-    slug: 'pabedan',
-    coords: { lat: 16.7785, lng: 96.1558 },
-    restaurants: ['Pabedan Street Noodles', 'Bogyoke Market Bites'],
+    bounds: { lat: [16.8, 16.82], lng: [96.14, 96.16] },
+    coords: { lat: 16.81, lng: 96.15 },
+    customers: 30,
+    restaurants: 20,
+    riders: 15,
+    featuredNames: ['Bahan Shwe Kaung', 'Inya Lake Cafe', 'Sayar San Road Grill'],
     orderWeight: 1.3,
+    demandTier: 'NORMAL',
   },
   {
-    name: 'Latha',
-    slug: 'latha',
-    coords: { lat: 16.7758, lng: 96.1502 },
-    restaurants: ['Latha Chinatown Dim Sum', '19th Street BBQ Latha'],
+    name: 'Yankin',
+    slug: 'yankin',
+    bounds: { lat: [16.83, 16.85], lng: [96.15, 96.17] },
+    coords: { lat: 16.84, lng: 96.16 },
+    customers: 30,
+    restaurants: 20,
+    riders: 15,
+    featuredNames: ['Yankin Seafood', 'Yankin Centre Kitchen', 'Yankin Shwe Hintha'],
     orderWeight: 1.2,
+    demandTier: 'NORMAL',
   },
   {
-    name: 'Lanmadaw',
-    slug: 'lanmadaw',
-    coords: { lat: 16.773, lng: 96.142 },
-    restaurants: ['Lanmadaw River View Kitchen', 'Strand Road Tea House'],
-    orderWeight: 1.0,
+    name: 'Mingaladon',
+    slug: 'mingaladon',
+    bounds: { lat: [16.9, 16.95], lng: [96.11, 96.16] },
+    coords: { lat: 16.925, lng: 96.135 },
+    customers: 30,
+    restaurants: 20,
+    riders: 15,
+    featuredNames: ['Mingaladon Airport Cafe', 'Mingaladon Tea House', 'Mingaladon Family Kitchen'],
+    orderWeight: 1.1,
+    demandTier: 'NORMAL',
   },
   {
-    name: 'Sanchaung',
-    slug: 'sanchaung',
-    coords: { lat: 16.8068, lng: 96.1334 },
-    restaurants: ['Sanchaung Bagaya Cafe', 'Myaynigone Hot Pot'],
-    orderWeight: 1.8,
+    name: 'North Dagon',
+    slug: 'northdagon',
+    bounds: { lat: [16.85, 16.88], lng: [96.18, 96.21] },
+    coords: { lat: 16.865, lng: 96.195 },
+    customers: 30,
+    restaurants: 20,
+    riders: 15,
+    featuredNames: ['North Dagon Pinlon Tea House', 'North Dagon Street Noodles', 'Pinlon Road BBQ'],
+    orderWeight: 1.15,
+    demandTier: 'NORMAL',
   },
   {
     name: 'Mayangone',
     slug: 'mayangone',
-    coords: { lat: 16.868, lng: 96.152 },
-    restaurants: ['Kaba Aye Garden Kitchen', 'Mayangone Lake Side Grill'],
-    orderWeight: 1.2,
+    bounds: { lat: [16.85, 16.89], lng: [96.14, 96.17] },
+    coords: { lat: 16.87, lng: 96.155 },
+    customers: 5,
+    restaurants: 5,
+    riders: 5,
+    featuredNames: ['Kaba Aye Garden Kitchen', 'Mayangone Lake Side Grill'],
+    orderWeight: 0.4,
+    demandTier: 'MINOR',
   },
   {
-    name: 'South Okkalapa',
-    slug: 'southokkalapa',
-    coords: { lat: 16.847, lng: 96.182 },
-    restaurants: ['South Okkalapa Shan Noodle', 'Thingangyun Junction Cafe'],
-    orderWeight: 1.1,
-  },
-  {
-    name: 'North Okkalapa',
-    slug: 'northokkalapa',
-    coords: { lat: 16.88, lng: 96.158 },
-    restaurants: ['North Okkalapa Family Kitchen', 'Thamine Road Tea Leaf'],
-    orderWeight: 1.0,
+    name: 'Thingangyun',
+    slug: 'thingangyun',
+    bounds: { lat: [16.82, 16.85], lng: [96.17, 96.2] },
+    coords: { lat: 16.835, lng: 96.185 },
+    customers: 5,
+    restaurants: 5,
+    riders: 5,
+    featuredNames: ['Thingangyun Junction Cafe', 'Thingangyun Shan Noodle'],
+    orderWeight: 0.4,
+    demandTier: 'MINOR',
   },
 ];
 
@@ -203,47 +297,67 @@ const CANCEL_REASONS = [
   'Payment failed',
 ];
 
-/* ── Unique picsum helpers ──────────────────────────────────── */
+const REAL_FOOD_IMAGES = [
+  'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1484723091791-0fee5969da8b?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=400&q=80',
+];
 
-const usedImageSeeds = new Set<string>();
+const REAL_RESTAURANT_IMAGES = [
+  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1537047902294-62a40c20a6ae?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1466978913421-bac2e5875461?auto=format&fit=crop&w=800&q=80',
+];
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
-    .slice(0, 48);
-}
-
-/** Never reuse the same picsum seed twice in one seed run */
-function uniquePicsum(seedBase: string, w = 400, h = 300) {
-  let seed = slugify(seedBase) || `img-${usedImageSeeds.size + 1}`;
-  let n = 0;
-  while (usedImageSeeds.has(seed)) {
-    n += 1;
-    seed = `${slugify(seedBase)}-${n}`;
-  }
-  usedImageSeeds.add(seed);
-  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${w}/${h}`;
+function uiAvatar(name: string) {
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&size=200`;
 }
 
 function myanmarName() {
   return `${faker.helpers.arrayElement(MYANMAR_FIRST)} ${faker.helpers.arrayElement(MYANMAR_SECOND)}`;
 }
 
-/** Small jitter still within ~1 km of township center */
-function jitter(base: { lat: number; lng: number }, spread = 0.008) {
+function randomInBounds(bounds: { lat: [number, number]; lng: [number, number] }) {
+  const lat = bounds.lat[0] + Math.random() * (bounds.lat[1] - bounds.lat[0]);
+  const lng = bounds.lng[0] + Math.random() * (bounds.lng[1] - bounds.lng[0]);
   return {
-    lat: Number((base.lat + (Math.random() - 0.5) * spread).toFixed(6)),
-    lng: Number((base.lng + (Math.random() - 0.5) * spread).toFixed(6)),
+    lat: Number(lat.toFixed(6)),
+    lng: Number(lng.toFixed(6)),
   };
 }
 
-/** Exact static pin for offline riders (no jitter) */
-function staticTownshipCoords(base: { lat: number; lng: number }, index: number) {
-  const lat = Number((base.lat + index * 0.00035).toFixed(6));
-  const lng = Number((base.lng + index * 0.00028).toFixed(6));
-  return { lat, lng };
+/** Offline riders stay on a deterministic pin inside the township bbox */
+function staticTownshipCoords(
+  bounds: { lat: [number, number]; lng: [number, number] },
+  index: number
+) {
+  const t = (index + 1) / (index + 6);
+  const lat = bounds.lat[0] + (bounds.lat[1] - bounds.lat[0]) * t;
+  const lng = bounds.lng[0] + (bounds.lng[1] - bounds.lng[0]) * t;
+  return { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) };
+}
+
+function restaurantNameFor(township: TownshipConfig, index: number) {
+  if (township.featuredNames[index]) return township.featuredNames[index];
+  const overflow = index - township.featuredNames.length;
+  const suffix = RESTAURANT_SUFFIXES[overflow % RESTAURANT_SUFFIXES.length];
+  const cycle = Math.floor(overflow / RESTAURANT_SUFFIXES.length);
+  const base = `${township.name} ${suffix}`;
+  return cycle > 0 ? `${base} ${cycle + 1}` : base;
+}
+
+function riderStatusFor(township: TownshipConfig, index: number): 'Online' | 'Offline' {
+  if (township.demandTier === 'HIGH') return 'Online';
+  if (township.demandTier === 'LOW') return index % 7 === 0 ? 'Offline' : 'Online';
+  return index % 3 === 0 ? 'Offline' : 'Online';
 }
 
 function pickTownshipWeighted(): TownshipConfig {
@@ -264,41 +378,94 @@ function log(msg: string) {
   console.log(msg);
 }
 
-function printCredentialsTable(rows: LoginCredential[]) {
+function printTownshipRoster() {
+  console.log('\n🏙  TOWNSHIP ROSTER — intentional supply / demand imbalance');
+  console.log(
+    `   ${pad('TOWNSHIP', 16)} ${pad('TIER', 8)} ${pad('CUST', 6)} ${pad('REST', 6)} ${pad('RIDER', 7)} LAT / LNG`
+  );
+  for (const t of TOWNSHIPS) {
+    const bbox = `${t.bounds.lat[0].toFixed(4)}–${t.bounds.lat[1].toFixed(4)}, ${t.bounds.lng[0].toFixed(4)}–${t.bounds.lng[1].toFixed(4)}`;
+    console.log(
+      `   ${pad(t.name, 16)} ${pad(t.demandTier, 8)} ${pad(String(t.customers), 6)} ${pad(String(t.restaurants), 6)} ${pad(String(t.riders), 7)} ${bbox}`
+    );
+  }
+  const totals = TOWNSHIPS.reduce(
+    (acc, t) => ({
+      customers: acc.customers + t.customers,
+      restaurants: acc.restaurants + t.restaurants,
+      riders: acc.riders + t.riders,
+    }),
+    { customers: 0, restaurants: 0, riders: 0 }
+  );
+  console.log(
+    `   ${pad('TOTAL', 16)} ${pad('', 8)} ${pad(String(totals.customers), 6)} ${pad(String(totals.restaurants), 6)} ${pad(String(totals.riders), 7)}`
+  );
+  console.log('   Insein = RED surge (80 cust / 5 riders) · South Dagon = cold (15 cust / 35 riders)\n');
+}
+
+function highlightCredentials(rows: LoginCredential[]) {
+  const out: LoginCredential[] = [];
+  const seen = new Set<string>();
+  const add = (row?: LoginCredential) => {
+    if (!row || seen.has(row.email)) return;
+    seen.add(row.email);
+    out.push(row);
+  };
+
+  add(rows.find((r) => r.role === 'ADMIN'));
+  for (const township of TOWNSHIPS) {
+    const ofTown = rows.filter((r) => r.township === township.name);
+    const byRole = (role: LoginCredential['role']) => ofTown.filter((r) => r.role === role);
+    byRole('CUSTOMER').slice(0, 2).forEach(add);
+    byRole('RESTAURANT').slice(0, 2).forEach(add);
+    if (township.demandTier === 'HIGH' || township.demandTier === 'LOW') {
+      byRole('RIDER').forEach(add);
+    } else {
+      byRole('RIDER').slice(0, 2).forEach(add);
+    }
+  }
+  return out;
+}
+
+function printCredentialsTable(rows: LoginCredential[], title: string) {
   const sorted = [...rows].sort((a, b) => {
     const order = { ADMIN: 0, CUSTOMER: 1, RESTAURANT: 2, RIDER: 3 } as const;
     if (order[a.role] !== order[b.role]) return order[a.role] - order[b.role];
+    if (a.township !== b.township) return a.township.localeCompare(b.township);
     return a.email.localeCompare(b.email);
   });
 
   console.log('\n🔑 ══════════════════════════════════════════════════════════════════════════════');
-  console.log('   LOGIN CREDENTIALS — copy any row to test');
+  console.log(`   ${title}`);
   console.log('══════════════════════════════════════════════════════════════════════════════');
   console.log(
-    `   ${pad('EMAIL', 36)} ${pad('ROLE', 12)} ${pad('PASSWORD', 14)} ${pad('DISPLAY ID', 12)} TOWNSHIP`
+    `   ${pad('EMAIL', 40)} ${pad('ROLE', 12)} ${pad('PASSWORD', 14)} ${pad('DISPLAY ID', 12)} TOWNSHIP`
   );
   console.log(
-    `   ${pad('─'.repeat(34), 36)} ${pad('─'.repeat(10), 12)} ${pad('─'.repeat(12), 14)} ${pad('─'.repeat(10), 12)} ────────`
+    `   ${pad('─'.repeat(38), 40)} ${pad('─'.repeat(10), 12)} ${pad('─'.repeat(12), 14)} ${pad('─'.repeat(10), 12)} ────────`
   );
 
   for (const row of sorted) {
     console.log(
-      `   ${pad(row.email, 36)} ${pad(row.role, 12)} ${pad(row.password, 14)} ${pad(row.displayId, 12)} ${row.township || '—'}`
+      `   ${pad(row.email, 40)} ${pad(row.role, 12)} ${pad(row.password, 14)} ${pad(row.displayId, 12)} ${row.township || '—'}`
     );
   }
 
   console.log('──────────────────────────────────────────────────────────────────────────────');
   console.log(`   ADMIN password  : ${ADMIN_PASSWORD}`);
   console.log(`   All other roles : ${USER_PASSWORD}`);
-  console.log(`   Total accounts  : ${sorted.length}  (exactly 1 ADMIN)`);
+  console.log(`   Rows shown      : ${sorted.length}`);
+  console.log('   Email pattern   : {role}.{township-slug}.{n}@test.com');
+  console.log('   Examples        : customer.insein.1@test.com · rider.southdagon.12@test.com');
   console.log('══════════════════════════════════════════════════════════════════════════════\n');
 }
 
 async function seed() {
   console.log('\n🇲🇲 ════════════════════════════════════════════════');
-  console.log('   FoodDash Phase 3 — 10 Yangon Townships');
-  console.log('   1-to-1 Users · Test@2026 · Single Admin');
+  console.log('   FoodDash — 10 Yangon Townships (imbalance seed)');
+  console.log('   Wipe · bbox lat/lng · Test@2026 · Single Admin');
   console.log('════════════════════════════════════════════════\n');
+  printTownshipRoster();
 
   try {
     const { default: dbConnect } = await import('../src/lib/mongodb');
@@ -312,6 +479,10 @@ async function seed() {
     );
     const { default: RiderProfile } = await import('../src/models/RiderProfile');
     const { default: MenuItem } = await import('../src/models/MenuItem');
+
+    if (TOWNSHIPS.length !== 10) {
+      throw new Error(`Expected exactly 10 townships, got ${TOWNSHIPS.length}`);
+    }
 
     await dbConnect();
     log('✅ Connected to MongoDB');
@@ -424,19 +595,22 @@ async function seed() {
 
     // ── Per-township entities + matching User (1:1) ───────
     for (const township of TOWNSHIPS) {
-      log(`📍 ${township.name}  (${township.coords.lat}, ${township.coords.lng})`);
+      log(
+        `📍 ${township.name}  [${township.demandTier}]  ` +
+          `${township.customers}C / ${township.restaurants}R / ${township.riders} riders  ` +
+          `bbox ${township.bounds.lat[0]}–${township.bounds.lat[1]}, ${township.bounds.lng[0]}–${township.bounds.lng[1]}`
+      );
 
       const restList: RestSeed[] = [];
       const custList: CustSeed[] = [];
       const riderList: RiderSeed[] = [];
 
-      // Restaurants (1–2) — each gets a User with role RESTAURANT
-      for (let i = 0; i < township.restaurants.length; i++) {
+      for (let i = 0; i < township.restaurants; i++) {
         restSeq += 1;
-        const restaurantName = township.restaurants[i];
+        const restaurantName = restaurantNameFor(township, i);
         const userId = new mongoose.Types.ObjectId();
         const restaurantId = String(userId); // session id === profile.restaurantId
-        const location = jitter(township.coords);
+        const location = randomInBounds(township.bounds);
         const email = `restaurant.${township.slug}.${i + 1}@test.com`;
         const displayId = `REST-${String(restSeq).padStart(4, '0')}`;
         const phone = `+9592${String(10000000 + restSeq).slice(-8)}`;
@@ -469,8 +643,8 @@ async function seed() {
           location,
           rating: faker.number.float({ min: 3.8, max: 5, fractionDigits: 1 }),
           address: `${restaurantName}, ${township.name} Township, Yangon`,
-          logoImage: uniquePicsum(`logo-${restaurantName}`, 400, 400),
-          coverImage: uniquePicsum(`cover-${restaurantName}`, 800, 400),
+          logoImage: faker.helpers.arrayElement(REAL_RESTAURANT_IMAGES),
+          coverImage: faker.helpers.arrayElement(REAL_RESTAURANT_IMAGES),
           email,
           phone,
           displayId,
@@ -510,25 +684,25 @@ async function seed() {
             isPopular: mi < 2,
             dietaryTags: [],
             addons: [],
-            image: uniquePicsum(`menu-${restaurantName}-${item.name}-${mi}`),
+            image: getDishImage(item.name),
             imageAlt: item.name,
+            rating: faker.number.float({ min: 3.8, max: 5, fractionDigits: 1 }),
           });
         });
         menusByRestaurant.set(restaurantId, menus);
       }
 
-      // Riders (2) — each gets a User with role RIDER
-      for (let i = 0; i < 2; i++) {
+      for (let i = 0; i < township.riders; i++) {
         riderSeq += 1;
         const userId = new mongoose.Types.ObjectId();
         const riderId = String(userId);
         const name = myanmarName();
         const [first, last] = name.split(' ');
-        const status: 'Online' | 'Offline' = i === 0 ? 'Online' : 'Offline';
+        const status = riderStatusFor(township, i);
         const riderCoords =
           status === 'Offline'
-            ? staticTownshipCoords(township.coords, i)
-            : jitter(township.coords, 0.006);
+            ? staticTownshipCoords(township.bounds, i)
+            : randomInBounds(township.bounds);
         const email = `rider.${township.slug}.${i + 1}@test.com`;
         const displayId = `RIDER-${String(riderSeq).padStart(4, '0')}`;
         const phone = `+9593${String(20000000 + riderSeq).slice(-8)}`;
@@ -561,20 +735,19 @@ async function seed() {
           vehicleType: faker.helpers.arrayElement(VEHICLES),
           status,
           township: township.name,
-          profileImage: uniquePicsum(`rider-avatar-${email}`, 200, 200),
+          profileImage: uiAvatar(name),
           displayId,
           riderCoords,
         });
       }
 
-      // Customers (2) — each gets a User with role CUSTOMER
-      for (let i = 0; i < 2; i++) {
+      for (let i = 0; i < township.customers; i++) {
         custSeq += 1;
         const userId = new mongoose.Types.ObjectId();
         const customerId = String(userId);
         const name = myanmarName();
         const [first, last] = name.split(' ');
-        const coords = jitter(township.coords);
+        const coords = randomInBounds(township.bounds);
         const email = `customer.${township.slug}.${i + 1}@test.com`;
         const displayId = `CUST-${String(custSeq).padStart(4, '0')}`;
         const phone = `+9594${String(30000000 + custSeq).slice(-8)}`;
@@ -605,7 +778,7 @@ async function seed() {
           email,
           phone,
           township: township.name,
-          profileImage: uniquePicsum(`customer-avatar-${email}`, 200, 200),
+          profileImage: uiAvatar(name),
           displayId,
           address: {
             label: faker.helpers.arrayElement(['Home', 'Work', 'Other']),
@@ -667,9 +840,10 @@ async function seed() {
 
     await RestaurantProfile.insertMany(
       allRestaurants.map((r, index) => {
+        const isInsein = r.township === 'Insein';
         let storeStatus: 'OPEN' | 'BUSY' | 'CLOSED' = 'OPEN';
-        if (index % 9 === 0) storeStatus = 'CLOSED';
-        else if (index % 6 === 0) storeStatus = 'BUSY';
+        if (!isInsein && index % 12 === 0) storeStatus = 'CLOSED';
+        else if (!isInsein && index % 8 === 0) storeStatus = 'BUSY';
 
         return {
           restaurantId: r.restaurantId,
@@ -680,10 +854,12 @@ async function seed() {
           openingTime: '08:30',
           closingTime: '21:30',
           storeStatus,
-          logoImage: r.logoImage,
-          coverImage: r.coverImage,
+          logoImage: faker.helpers.arrayElement(REAL_RESTAURANT_IMAGES),
+          coverImage: faker.helpers.arrayElement(REAL_RESTAURANT_IMAGES),
+          rating: r.rating,
+          reviewCount: 0,
           township: r.township,
-          approvalStatus: index % 4 !== 0 ? 'APPROVED' : 'PENDING',
+          approvalStatus: isInsein || index % 7 !== 0 ? 'APPROVED' : 'PENDING',
         };
       })
     );
@@ -696,7 +872,7 @@ async function seed() {
         name: c.name,
         email: c.email,
         phone: c.phone,
-        profileImage: c.profileImage,
+        profileImage: uiAvatar(c.name),
         savedAddresses: [c.address],
       }))
     );
@@ -710,11 +886,11 @@ async function seed() {
         vehicleType: r.vehicleType,
         status: r.status,
         licensePlate: `YGN-${faker.string.numeric(4)}`,
-        profileImage: r.profileImage,
+        profileImage: uiAvatar(r.name),
         township: r.township,
         riderCoords: r.riderCoords,
         location: r.riderCoords,
-        approvalStatus: index % 5 !== 0 ? 'APPROVED' : 'PENDING',
+        approvalStatus: r.township === 'Insein' || index % 8 !== 0 ? 'APPROVED' : 'PENDING',
       }))
     );
 
@@ -745,9 +921,8 @@ async function seed() {
     log('✅ 1-to-1 User ↔ Profile linkage verified\n');
 
     log(
-      `✅ Profiles saved — 🍽 ${allRestaurants.length} · 📋 ${allMenus.length} · 👤 ${allCustomers.length} · 🛵 ${allRiders.length}`
+      `✅ Profiles saved — 🍽 ${allRestaurants.length} · 📋 ${allMenus.length} · 👤 ${allCustomers.length} · 🛵 ${allRiders.length}\n`
     );
-    log(`   Unique picsum seeds used: ${usedImageSeeds.size}\n`);
 
     // ── Orders for analytics / live tracking tests ─────────
     log('🧾 Generating 300 orders across 10 townships…');
@@ -805,11 +980,10 @@ async function seed() {
       });
 
       const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-      const discount = faker.helpers.arrayElement([0, 0, 500, 1000]);
+      const deliveryFee = faker.helpers.arrayElement([1000, 1500, 2000, 2500]);
+      const pricing = calculateOrderPricing({ subtotal, deliveryFee });
       const surgePrice =
         Math.random() < 0.25 ? faker.helpers.arrayElement([500, 1000, 1500]) : 0;
-      const deliveryFee = faker.helpers.arrayElement([1000, 1500, 2000, 2500]);
-      const totalAmount = Math.max(0, subtotal - discount + surgePrice + deliveryFee);
 
       const prepTimeMins = faker.number.int({ min: 12, max: 35 });
       const durationMins = faker.number.int({ min: 20, max: 50 });
@@ -823,7 +997,7 @@ async function seed() {
       const riderCoords = assignedRider
         ? assignedRider.status === 'Offline'
           ? assignedRider.riderCoords
-          : jitter(township.coords, 0.01)
+          : randomInBounds(township.bounds)
         : undefined;
 
       return {
@@ -841,12 +1015,18 @@ async function seed() {
         riderCoords,
         items,
         totals: {
-          subtotal,
-          deliveryFee,
-          discount,
+          subtotal: pricing.subtotal,
+          tax: pricing.tax,
+          deliveryFee: pricing.deliveryFee,
+          platformFee: pricing.platformFee,
+          discount: 0,
           surgePrice,
-          total: totalAmount,
-          totalAmount,
+          restaurantCommission: pricing.restaurantCommission,
+          restaurantCommissionRate: pricing.restaurantCommissionRate,
+          total: pricing.total,
+          totalAmount: pricing.totalAmount,
+          riderEarning: pricing.riderEarning,
+          owedAmount: pricing.owedAmount,
           township: township.name,
         },
         deliveryAddress: {
@@ -854,7 +1034,7 @@ async function seed() {
           township: township.name,
         },
         paymentMethod: faker.helpers.arrayElement(['cash', 'wallet', 'card']),
-        discount,
+        discount: 0,
         surgePrice,
         weather: faker.helpers.arrayElement(WEATHER),
         vehicleType: assignedRider?.vehicleType || rider.vehicleType,
@@ -865,7 +1045,7 @@ async function seed() {
           ? faker.helpers.arrayElement(CANCEL_REASONS)
           : '',
         restaurantRating: restaurant.rating,
-        baseRiderFee: faker.number.int({ min: 1000, max: 2500 }),
+        baseRiderFee: pricing.riderEarning,
         tipAmount:
           status === 'DELIVERED' ? faker.helpers.arrayElement([0, 500, 1000]) : 0,
         completedAt: isTerminal
@@ -878,24 +1058,30 @@ async function seed() {
 
     const inserted = await Order.insertMany(orders, { ordered: false });
 
-    console.log('\n📊 Orders by township:');
+    console.log('\n📊 Orders by township (weighted toward Insein):');
     for (const t of TOWNSHIPS) {
       const n = townshipOrderCounts.get(t.name) || 0;
       const bar = '█'.repeat(Math.max(1, Math.round(n / 6)));
-      console.log(`   ${t.name.padEnd(18)} ${String(n).padStart(3)}  ${bar}`);
+      console.log(`   ${pad(t.name, 16)} ${String(n).padStart(3)}  ${t.demandTier.padEnd(7)} ${bar}`);
     }
 
-    printCredentialsTable(credentials);
+    printCredentialsTable(
+      highlightCredentials(credentials),
+      'LOGIN CREDENTIALS — admin, samples, all Insein + South Dagon riders'
+    );
+    printCredentialsTable(credentials, 'FULL LOGIN LIST — every seeded account');
 
-    console.log('💡 Quick-start (Bahan township):');
-    console.log(`   Customer   → customer.bahan.1@test.com / ${USER_PASSWORD}`);
-    console.log(`   Restaurant → restaurant.bahan.1@test.com / ${USER_PASSWORD}`);
-    console.log(`   Rider On   → rider.bahan.1@test.com / ${USER_PASSWORD}`);
-    console.log(`   Rider Off  → rider.bahan.2@test.com / ${USER_PASSWORD}`);
-    console.log(`   Admin      → ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+    console.log('💡 Quick-start');
+    console.log(`   Admin              → ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+    console.log(`   Insein customer    → customer.insein.1@test.com / ${USER_PASSWORD}`);
+    console.log(`   Insein restaurant  → restaurant.insein.1@test.com / ${USER_PASSWORD}`);
+    console.log(`   Insein rider (1/5) → rider.insein.1@test.com / ${USER_PASSWORD}`);
+    console.log(`   South Dagon rider  → rider.southdagon.1@test.com / ${USER_PASSWORD}`);
+    console.log(`   Bahan customer     → customer.bahan.1@test.com / ${USER_PASSWORD}`);
+    console.log(`   Pattern            → {customer|restaurant|rider}.{slug}.{n}@test.com / ${USER_PASSWORD}`);
 
     console.log('\n🎉 ════════════════════════════════════════════════');
-    console.log('   Phase 3 seed complete');
+    console.log('   Yangon imbalance seed complete');
     console.log('────────────────────────────────────────────────');
     console.log(`   🏙  Townships   : ${TOWNSHIPS.length}`);
     console.log(`   🍽  Restaurants : ${allRestaurants.length}`);
@@ -904,7 +1090,9 @@ async function seed() {
     console.log(`   🛵 Riders      : ${allRiders.length}`);
     console.log(`   🧾 Orders      : ${inserted.length}`);
     console.log(`   🔐 Users       : ${userTotal} (1 ADMIN only)`);
-    console.log(`   🖼  Unique imgs : ${usedImageSeeds.size}`);
+    console.log('   🖼  Images      : Unsplash food/restaurant + UI Avatars');
+    console.log('   🔴 Insein       : 80 customers / 40 kitchens / 5 riders');
+    console.log('   🔵 South Dagon  : 15 customers / 10 kitchens / 35 riders');
     console.log('════════════════════════════════════════════════\n');
   } catch (error) {
     console.error('\n❌ Seed failed:', error);

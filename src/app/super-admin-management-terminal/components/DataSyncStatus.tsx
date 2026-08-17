@@ -54,7 +54,7 @@ export default function DataSyncStatus({
 
   return (
     <div
-      className={`hidden items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] font-medium text-muted-foreground/90 backdrop-blur-sm sm:inline-flex ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] font-medium text-muted-foreground/90 backdrop-blur-sm ${className}`}
       title={
         lastFetchTime
           ? `Last sync: ${new Date(lastFetchTime).toLocaleTimeString()}`

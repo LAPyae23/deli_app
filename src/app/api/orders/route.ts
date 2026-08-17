@@ -3,6 +3,11 @@ import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
 import MenuItem from '@/models/MenuItem';
 import RestaurantProfile from '@/models/RestaurantProfile';
+import CustomerProfile from '@/models/CustomerProfile';
+import {
+  calculateOrderPricing,
+  subtotalFromItems,
+} from '@/lib/orderPricing';
 
 const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
 
@@ -13,14 +18,20 @@ export async function GET(request: Request) {
     const restaurantName = searchParams.get('restaurantName');
     const restaurantId = searchParams.get('restaurantId');
     const customerId = searchParams.get('customerId');
+    const orderNumber = searchParams.get('orderNumber');
     const status = searchParams.get('status');
     const riderId = searchParams.get('riderId');
     const unassigned = searchParams.get('unassigned');
 
     const query: Record<string, unknown> = {};
-    if (restaurantName) query.restaurantName = restaurantName;
-    if (restaurantId) query.restaurantId = restaurantId;
+    if (restaurantId) {
+      query.restaurantId = restaurantId;
+    } else if (restaurantName) {
+      query.restaurantName = restaurantName;
+    }
     if (customerId) query.customerId = customerId;
+    if (riderId) query.riderId = riderId;
+    if (orderNumber) query.orderNumber = orderNumber;
 
     if (status) {
       const statuses = status
@@ -34,22 +45,25 @@ export async function GET(request: Request) {
       }
     }
 
-    if (riderId) {
-      query.riderId = riderId;
-    }
-
     if (unassigned === 'true' || unassigned === '1') {
+      // Seed / older docs may omit `unassigned` even when no rider is assigned.
       query.$or = [
-        { riderId: { $exists: false } },
-        { riderId: null },
-        { riderId: '' },
+        { unassigned: true },
+        {
+          unassigned: { $exists: false },
+          $or: [{ riderId: { $exists: false } }, { riderId: null }, { riderId: '' }],
+        },
       ];
     }
 
-    // Offline riders must not receive dispatch candidates
+    // Offline or blocked riders must not receive dispatch candidates
     const forRiderId = searchParams.get('forRiderId')?.trim() || '';
     if (forRiderId) {
       const RiderProfile = (await import('@/models/RiderProfile')).default;
+      const { isRiderBlocked } = await import('@/lib/riderWallet');
+      if (await isRiderBlocked(forRiderId)) {
+        return NextResponse.json({ success: true, orders: [] });
+      }
       const rider = await RiderProfile.findOne({ riderId: forRiderId })
         .select('status')
         .lean();
@@ -58,14 +72,25 @@ export async function GET(request: Request) {
       }
     }
 
-    const orders = await Order.find(query).sort({ createdAt: -1 });
-    return NextResponse.json({ success: true, orders });
+    const parsedLimit = parseInt(searchParams.get('limit') || '50', 10);
+    const limit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(100, parsedLimit) : 50;
+
+    const orders = await Order.find(query)
+      .select(
+        'orderNumber restaurantName restaurantId customerId customerName status items.name items.quantity items.price items.category items.unitPrice items.id items.options items.note items.restaurantName items.image items.imageAlt totals deliveryAddress paymentMethod createdAt updatedAt riderId riderName prepTime travelMins durationMins restaurantCoords riderCoords discount tipAmount'
+      )
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    return NextResponse.json({ success: true, orders, limit });
   } catch (error) {
     console.error('Orders GET error:', error);
-    return NextResponse.json(
-      { success: false, message: 'Failed to fetch orders' },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Failed to fetch orders';
+    return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }
 
@@ -201,30 +226,39 @@ export async function POST(request: Request) {
       })
     );
 
-    const orderNumber = `#FP-${Math.floor(1000 + Math.random() * 9000)}`;
-    const restaurantName =
+    let restaurantName =
       body.restaurantName || items[0]?.restaurantName || 'Burger Bliss';
-    const restaurantId = body.restaurantId || '';
+    let restaurantId = String(
+      body.restaurantId || rawItems[0]?.restaurantId || ''
+    ).trim();
 
     let restaurantCoords = { ...FALLBACK_COORDS };
     try {
-      const profileQuery = restaurantId ? { restaurantId } : { restaurantName };
-      const profile = await RestaurantProfile.findOne(profileQuery).lean();
-      const lat = Number(profile?.location?.lat);
-      const lng = Number(profile?.location?.lng);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        restaurantCoords = { lat, lng };
-      } else if (!restaurantId && restaurantName) {
-        const byName = await RestaurantProfile.findOne({
-          restaurantName: new RegExp(
-            `^${restaurantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+      const nameRegex = restaurantName
+        ? new RegExp(
+            `^${String(restaurantName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
             'i'
-          ),
-        }).lean();
-        const nLat = Number(byName?.location?.lat);
-        const nLng = Number(byName?.location?.lng);
-        if (Number.isFinite(nLat) && Number.isFinite(nLng)) {
-          restaurantCoords = { lat: nLat, lng: nLng };
+          )
+        : null;
+      const profile =
+        (restaurantId
+          ? await RestaurantProfile.findOne({ restaurantId }).lean()
+          : null) ||
+        (nameRegex
+          ? await RestaurantProfile.findOne({ restaurantName: nameRegex }).lean()
+          : await RestaurantProfile.findOne({ restaurantName }).lean());
+
+      if (profile) {
+        if (!restaurantId && profile.restaurantId) {
+          restaurantId = String(profile.restaurantId);
+        }
+        if (profile.restaurantName) {
+          restaurantName = String(profile.restaurantName);
+        }
+        const lat = Number(profile.location?.lat);
+        const lng = Number(profile.location?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          restaurantCoords = { lat, lng };
         }
       }
     } catch (lookupError) {
@@ -235,17 +269,27 @@ export async function POST(request: Request) {
     const randomWeather =
       weatherOptions[Math.floor(Math.random() * weatherOptions.length)];
 
+    const subtotal = subtotalFromItems(items);
+    const requestedDelivery = Number(body.totals?.deliveryFee);
+    const tipAmount = Math.max(
+      0,
+      Math.round(Number(body.tipAmount ?? body.totals?.tipAmount) || 0)
+    );
+    const pricing = calculateOrderPricing({
+      subtotal,
+      deliveryFee: requestedDelivery,
+      tipAmount,
+    });
+
     const discount =
       body.discount != null && Number.isFinite(Number(body.discount))
-        ? Number(body.discount)
-        : Math.round(Math.random() * 2000); // 0–2000 MMK simulated promo
+        ? Math.max(0, Number(body.discount))
+        : Number(body.totals?.discount) || 0;
 
     const surgePrice =
       body.surgePrice != null && Number.isFinite(Number(body.surgePrice))
-        ? Number(body.surgePrice)
-        : Math.random() < 0.35
-          ? Math.round(500 + Math.random() * 1500)
-          : 0;
+        ? Math.max(0, Number(body.surgePrice))
+        : Number(body.totals?.surgePrice) || 0;
 
     const weather =
       typeof body.weather === 'string' &&
@@ -271,15 +315,54 @@ export async function POST(request: Request) {
         ? Number(body.durationMins)
         : prepTime + travelMins;
 
+    const promoApplied = Boolean(body.totals?.promoApplied || body.promoApplied);
+    const promoCodeUsed = String(
+      body.promoCodeUsed || body.totals?.promoCodeUsed || ''
+    )
+      .trim()
+      .toUpperCase();
+    const customerId = String(body.customerId || 'guest');
+    const [orderSeq, priorCustomerOrders] = await Promise.all([
+      Order.countDocuments(),
+      customerId && customerId !== 'guest'
+        ? Order.countDocuments({ customerId })
+        : Promise.resolve(0),
+    ]);
+    const orderNumber = `#FP-${String(orderSeq + 1).padStart(5, '0')}`;
+    const customerOrderCount = priorCustomerOrders + 1;
+    const customerTotal = Math.max(0, Math.round(pricing.total - discount));
+
+    const totals = {
+      subtotal: pricing.subtotal,
+      tax: pricing.tax,
+      deliveryFee: pricing.deliveryFee,
+      platformFee: pricing.platformFee,
+      discount,
+      promoApplied,
+      promoCodeUsed,
+      surgePrice,
+      restaurantCommission: pricing.restaurantCommission,
+      restaurantCommissionRate: pricing.restaurantCommissionRate,
+      total: customerTotal,
+      totalAmount: customerTotal,
+      riderEarning: pricing.riderEarning,
+      owedAmount: Math.max(0, customerTotal - pricing.riderEarning),
+      tipAmount: pricing.tipAmount,
+      township:
+        typeof body.totals?.township === 'string'
+          ? body.totals.township
+          : body.deliveryAddress?.township || '',
+    };
+
     const newOrder = await Order.create({
       orderNumber,
       restaurantName,
       restaurantId,
-      customerId: body.customerId || 'guest',
+      customerId,
       customerName: body.customerName || body.deliveryAddress?.label || 'Customer',
       status: 'PENDING',
       items,
-      totals: body.totals,
+      totals,
       deliveryAddress: body.deliveryAddress,
       paymentMethod: body.paymentMethod || 'card',
       restaurantCoords,
@@ -290,7 +373,39 @@ export async function POST(request: Request) {
       prepTime,
       travelMins,
       durationMins,
+      customerOrderCount,
+      unassigned: true,
+      baseRiderFee: Math.max(0, pricing.riderEarning - pricing.tipAmount),
+      tipAmount: pricing.tipAmount,
     });
+
+    if (promoCodeUsed && customerId && customerId !== 'guest') {
+      try {
+        const profile = await CustomerProfile.findOne({ customerId }).lean();
+        if (profile) {
+          const adminCode = String(profile.promoCode || '').trim().toUpperCase();
+          const streakCode = String(profile.streakVoucherCode || '')
+            .trim()
+            .toUpperCase();
+          const unset: Record<string, unknown> = {};
+          if (!adminCode || promoCodeUsed === adminCode || Boolean(profile.hasPromo)) {
+            unset.hasPromo = false;
+            unset.promoCode = '';
+            unset.promoDiscountPercent = 0;
+          }
+          if (streakCode && promoCodeUsed === streakCode) {
+            unset.hasStreakReward = false;
+            unset.streakVoucherCode = '';
+            unset.streakDiscountPercent = 0;
+          }
+          if (Object.keys(unset).length > 0) {
+            await CustomerProfile.updateOne({ customerId }, { $set: unset });
+          }
+        }
+      } catch (promoError) {
+        console.warn('Failed to consume promo after order:', promoError);
+      }
+    }
 
     // Auto-deduct menu stock for each ordered item
     for (const item of body.items as Array<{ id?: string; quantity?: number }>) {

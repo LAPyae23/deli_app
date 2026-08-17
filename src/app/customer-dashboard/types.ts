@@ -5,6 +5,7 @@ export type CartItem = {
   unitPrice: number;
   quantity: number;
   restaurantName?: string;
+  restaurantId?: string;
   image?: string;
   imageAlt?: string;
   note?: string;
@@ -26,19 +27,23 @@ export type OrderTotals = {
   tax: number;
   total: number;
   promoApplied: boolean;
+  tipAmount?: number;
+  promoCodeUsed?: string;
 };
 
 export type Restaurant = {
   id: string;
   name: string;
   cuisine: string;
-  rating: number;
+  rating: number | null;
   reviews: number;
   deliveryTime: string;
   deliveryFee: number;
   minOrder: number;
   image: string;
   imageAlt: string;
+  logoImage?: string;
+  coverImage?: string;
   tags: string[];
   isOpen: boolean;
   storeStatus?: 'OPEN' | 'BUSY' | 'CLOSED';
@@ -56,7 +61,7 @@ export type MenuItem = {
   name: string;
   description: string;
   price: number;
-  rating: number;
+  rating: number | null;
   image: string;
   imageAlt: string;
   category: string;

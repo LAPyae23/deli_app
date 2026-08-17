@@ -5,7 +5,17 @@ import bcrypt from 'bcryptjs';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: { email?: string; password?: string; role?: string } = {};
+    try {
+      const raw = await request.text();
+      if (raw.trim()) body = JSON.parse(raw);
+    } catch {
+      return NextResponse.json(
+        { success: false, message: 'Invalid login payload' },
+        { status: 400 }
+      );
+    }
+
     const { email, password, role } = body;
 
     if (!email || !password || !role) {

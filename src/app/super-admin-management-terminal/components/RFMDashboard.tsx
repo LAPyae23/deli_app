@@ -12,15 +12,16 @@ import {
 import {
   Crown,
   Loader2,
-  Mail,
   MoonStar,
   Users,
   Sparkles,
+  TicketPercent,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatKyat } from '@/lib/currency';
 
 type RfmSegment = 'Top VIP' | 'Sleeping Beauty' | 'New/Normal';
+type ActiveTab = 'VIP' | 'SLEEPING' | 'NORMAL';
 
 type SegmentSlice = {
   name: RfmSegment;
@@ -44,7 +45,9 @@ type RfmResponse = {
     totalCustomers: number;
     segments: SegmentSlice[];
   };
+  topVips?: RfmCustomer[];
   sleepingBeauties?: RfmCustomer[];
+  newNormals?: RfmCustomer[];
   message?: string;
 };
 
@@ -54,17 +57,27 @@ const SEGMENT_COLORS: Record<RfmSegment, string> = {
   'New/Normal': '#34d399',
 };
 
+const TABS: { key: ActiveTab; label: string; segment: RfmSegment }[] = [
+  { key: 'VIP', label: 'VIP', segment: 'Top VIP' },
+  { key: 'SLEEPING', label: 'Sleeping', segment: 'Sleeping Beauty' },
+  { key: 'NORMAL', label: 'Normal', segment: 'New/Normal' },
+];
+
 function formatMoney(amount: number) {
   return formatKyat(amount);
 }
 
 export default function RFMDashboard() {
   const [segments, setSegments] = useState<SegmentSlice[]>([]);
+  const [topVips, setTopVips] = useState<RfmCustomer[]>([]);
   const [sleepingBeauties, setSleepingBeauties] = useState<RfmCustomer[]>([]);
+  const [newNormals, setNewNormals] = useState<RfmCustomer[]>([]);
   const [totalCustomers, setTotalCustomers] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<ActiveTab>('VIP');
+  const [grantedIds, setGrantedIds] = useState<Set<string>>(new Set());
+  const [grantingId, setGrantingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,16 +93,20 @@ export default function RFMDashboard() {
         }
         if (!cancelled) {
           setSegments(Array.isArray(data.summary?.segments) ? data.summary!.segments : []);
+          setTopVips(Array.isArray(data.topVips) ? data.topVips : []);
           setSleepingBeauties(
             Array.isArray(data.sleepingBeauties) ? data.sleepingBeauties : []
           );
+          setNewNormals(Array.isArray(data.newNormals) ? data.newNormals : []);
           setTotalCustomers(Number(data.summary?.totalCustomers) || 0);
         }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load');
           setSegments([]);
+          setTopVips([]);
           setSleepingBeauties([]);
+          setNewNormals([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -115,9 +132,58 @@ export default function RFMDashboard() {
     [segments]
   );
 
-  function sendDiscount(customer: RfmCustomer) {
-    setSentIds((prev) => new Set(prev).add(customer.customerId));
-    toast.success(`20% discount email queued for ${customer.customerName}`);
+  const list = useMemo(() => {
+    if (activeTab === 'VIP') return topVips;
+    if (activeTab === 'SLEEPING') return sleepingBeauties;
+    return newNormals;
+  }, [activeTab, topVips, sleepingBeauties, newNormals]);
+
+  const tabMeta = TABS.find((t) => t.key === activeTab) || TABS[0];
+
+  async function grantPromo(customer: RfmCustomer) {
+    const percentRaw = window.prompt(
+      `Discount percentage for ${customer.customerName} (e.g. 20)`,
+      '20'
+    );
+    if (percentRaw == null) return;
+    const discountPercent = Number(percentRaw);
+    if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
+      toast.error('Enter a percentage between 1 and 100');
+      return;
+    }
+
+    const codeRaw = window.prompt('Promo code (e.g. COMEBACK20)', 'COMEBACK20');
+    if (codeRaw == null) return;
+    const promoCode = codeRaw.trim().toUpperCase();
+    if (!promoCode) {
+      toast.error('Promo code is required');
+      return;
+    }
+
+    setGrantingId(customer.customerId);
+    try {
+      const res = await fetch('/api/admin/grant-promo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: customer.customerId,
+          discountPercent,
+          promoCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to grant promo');
+      }
+      setGrantedIds((prev) => new Set(prev).add(customer.customerId));
+      toast.success(
+        `Granted ${promoCode} (${discountPercent}% off) to ${customer.customerName}`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to grant promo');
+    } finally {
+      setGrantingId(null);
+    }
   }
 
   if (loading) {
@@ -224,24 +290,36 @@ export default function RFMDashboard() {
         </div>
 
         <div className="xl:col-span-3">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <MoonStar className="h-4 w-4 text-violet-400" />
-              <h3 className="text-sm font-bold text-foreground">Sleeping Beauties</h3>
-              <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-300">
-                Win-back
-              </span>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex rounded-xl border border-border bg-muted/50 p-1">
+              {TABS.map((tab) => {
+                const active = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      active
+                        ? 'bg-admin text-primary-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
             </div>
             <p className="text-xs text-muted-foreground">
-              High value / frequency · inactive recently
+              Grant a one-time promo to this segment
             </p>
           </div>
 
-          {sleepingBeauties.length === 0 ? (
+          {list.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border px-4 py-14 text-center">
               <Users className="h-5 w-5 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                No Sleeping Beauties found — great retention so far.
+                No {tabMeta.segment} customers in this window.
               </p>
             </div>
           ) : (
@@ -258,8 +336,9 @@ export default function RFMDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border bg-background/40">
-                    {sleepingBeauties.map((c) => {
-                      const sent = sentIds.has(c.customerId);
+                    {list.map((c) => {
+                      const granted = grantedIds.has(c.customerId);
+                      const busy = grantingId === c.customerId;
                       return (
                         <tr
                           key={c.customerId}
@@ -283,16 +362,24 @@ export default function RFMDashboard() {
                           <td className="px-4 py-3 text-right">
                             <button
                               type="button"
-                              disabled={sent}
-                              onClick={() => sendDiscount(c)}
+                              disabled={granted || busy}
+                              onClick={() => grantPromo(c)}
                               className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                                sent
+                                granted
                                   ? 'cursor-default bg-emerald-500/15 text-emerald-400'
-                                  : 'bg-violet-500/20 text-violet-200 hover:bg-violet-500/30'
+                                  : 'bg-admin/20 text-admin hover:bg-admin/30'
                               }`}
                             >
-                              <Mail className="h-3.5 w-3.5" />
-                              {sent ? 'Email Sent' : 'Send 20% Discount Email'}
+                              {busy ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : granted ? (
+                                <Crown className="h-3.5 w-3.5" />
+                              ) : activeTab === 'SLEEPING' ? (
+                                <MoonStar className="h-3.5 w-3.5" />
+                              ) : (
+                                <TicketPercent className="h-3.5 w-3.5" />
+                              )}
+                              {granted ? 'Promo Granted' : 'Grant Promo Code'}
                             </button>
                           </td>
                         </tr>

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useNotificationSound } from '@/hooks/useNotificationSound';
 
 type ChatMessage = {
@@ -149,6 +150,7 @@ export default function ChatWidget({
       }
     } catch (error) {
       console.warn(error);
+      toast.error(error instanceof Error ? error.message : 'Failed to send message');
     } finally {
       setIsSending(false);
     }

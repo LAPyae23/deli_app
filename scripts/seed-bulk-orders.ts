@@ -6,6 +6,9 @@
  *   • Market Basket    — frequent item pairings for Apriori
  *   • RFM / Churn      — VIP (15+) vs Sleeping Beauty (1 order ~5 mo ago)
  *   • Statuses         — 85% DELIVERED / 10% CANCELLED / 5% REJECTED
+ *   • Township skew    — ~50% Insein (RED) · ~25% North Dagon+Bahan · ~5% South Dagon
+ *
+ * Drop-offs are jittered near the chosen restaurant lat/lng (Yangon bboxes).
  *
  * Prerequisites: run `npm run seed` first so profiles exist.
  *
@@ -17,6 +20,7 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import mongoose from 'mongoose';
 import { faker } from '@faker-js/faker';
+import { calculateOrderPricing } from '../src/lib/orderPricing';
 
 function loadEnvFile(filePath: string) {
   if (!existsSync(filePath)) return;
@@ -45,9 +49,68 @@ const TOTAL_ORDERS = 10_000;
 /** Keep batches small enough to avoid OOM; 500 or 1000 both work — default 500. */
 const BATCH_SIZE = Number(process.env.BULK_ORDER_BATCH_SIZE) === 1000 ? 1000 : 500;
 
+type TownshipName =
+  | 'Insein'
+  | 'South Dagon'
+  | 'Hlaing'
+  | 'Kamaryut'
+  | 'Bahan'
+  | 'Yankin'
+  | 'Mingaladon'
+  | 'North Dagon'
+  | 'Mayangone'
+  | 'Thingangyun';
+
+const TOWNSHIP_CENTERS: Record<TownshipName, { lat: number; lng: number }> = {
+  Insein: { lat: 16.895, lng: 96.095 },
+  'South Dagon': { lat: 16.825, lng: 96.22 },
+  Hlaing: { lat: 16.845, lng: 96.12 },
+  Kamaryut: { lat: 16.83, lng: 96.13 },
+  Bahan: { lat: 16.81, lng: 96.15 },
+  Yankin: { lat: 16.84, lng: 96.16 },
+  Mingaladon: { lat: 16.925, lng: 96.135 },
+  'North Dagon': { lat: 16.865, lng: 96.195 },
+  Mayangone: { lat: 16.87, lng: 96.155 },
+  Thingangyun: { lat: 16.835, lng: 96.185 },
+};
+
+/** Remaining 20% after Insein / North Dagon+Bahan / South Dagon quotas */
+const REST_TOWNSHIPS: TownshipName[] = [
+  'Hlaing',
+  'Kamaryut',
+  'Yankin',
+  'Mingaladon',
+  'Mayangone',
+  'Thingangyun',
+];
+
 const WEATHER = ['Sunny', 'Rainy', 'Cloudy', 'Stormy'] as const;
 const PAYMENT_METHODS = ['cash', 'wallet', 'card'] as const;
 const CATEGORIES = ['Fast Food', 'Burmese', 'Drinks', 'Dessert'] as const;
+
+const REAL_FOOD_IMAGES = [
+  'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1484723091791-0fee5969da8b?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=400&q=80',
+  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=400&q=80',
+];
+
+const REAL_RESTAURANT_IMAGES = [
+  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1537047902294-62a40c20a6ae?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1466978913421-bac2e5875461?auto=format&fit=crop&w=800&q=80',
+];
+
+function uiAvatar(name: string) {
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&size=200`;
+}
 
 /** Apriori-friendly catalog — fixed names so association rules stay clear */
 const CATALOG: Array<{
@@ -142,11 +205,33 @@ type LeanRider = {
   name?: string;
   vehicleType?: string;
   status?: string;
+  township?: string;
   riderCoords?: { lat?: number; lng?: number };
   location?: { lat?: number; lng?: number };
 };
 
 type Persona = 'VIP' | 'SLEEPING' | 'REGULAR';
+
+function restaurantCoordsOf(restaurant: LeanRestaurant, township: TownshipName) {
+  const lat = Number(restaurant.location?.lat);
+  const lng = Number(restaurant.location?.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return { lat, lng };
+  }
+  return TOWNSHIP_CENTERS[township];
+}
+
+/** Random drop-off 150–900 m from the restaurant pin, still in the same zone. */
+function dropoffNearRestaurant(origin: { lat: number; lng: number }) {
+  const meters = 150 + Math.random() * 750;
+  const degLat = meters / 111_320;
+  const degLng = meters / (111_320 * Math.cos((origin.lat * Math.PI) / 180));
+  const angle = Math.random() * Math.PI * 2;
+  return {
+    lat: Number((origin.lat + Math.cos(angle) * degLat).toFixed(6)),
+    lng: Number((origin.lng + Math.sin(angle) * degLng).toFixed(6)),
+  };
+}
 
 type OrderSlot = {
   customer: LeanCustomer;
@@ -175,6 +260,86 @@ function pick<T>(arr: T[]): T {
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
+
+function normalizeTownshipName(value?: string | null): TownshipName | null {
+  const t = String(value || '').trim();
+  if (!t) return null;
+  if (/insein/i.test(t)) return 'Insein';
+  if (/south\s*dagon/i.test(t)) return 'South Dagon';
+  if (/north\s*dagon/i.test(t)) return 'North Dagon';
+  if (/kamaryut|kamayut/i.test(t)) return 'Kamaryut';
+  if (/hlaing/i.test(t)) return 'Hlaing';
+  if (/bahan/i.test(t)) return 'Bahan';
+  if (/yankin/i.test(t)) return 'Yankin';
+  if (/mingaladon/i.test(t)) return 'Mingaladon';
+  if (/mayangone|mayangon/i.test(t)) return 'Mayangone';
+  if (/thingangyun/i.test(t)) return 'Thingangyun';
+  return null;
+}
+
+/**
+ * Exact quotas so the heatmap / auto-surge cannot drift:
+ *   50% Insein · 25% North Dagon + Bahan · 5% South Dagon · 20% other zones
+ */
+function buildTownshipAssignments(total: number): TownshipName[] {
+  const insein = Math.round(total * 0.5);
+  const southDagon = Math.round(total * 0.05);
+  const northBahan = Math.round(total * 0.25);
+  const bahan = Math.floor(northBahan / 2);
+  const northDagon = northBahan - bahan;
+  const rest = Math.max(0, total - insein - southDagon - bahan - northDagon);
+
+  const assignments: TownshipName[] = [
+    ...Array<TownshipName>(insein).fill('Insein'),
+    ...Array<TownshipName>(southDagon).fill('South Dagon'),
+    ...Array<TownshipName>(bahan).fill('Bahan'),
+    ...Array<TownshipName>(northDagon).fill('North Dagon'),
+  ];
+
+  const restWeights = [1, 1, 1, 1, 0.4, 0.4];
+  const weightSum = restWeights.reduce((s, w) => s + w, 0);
+  for (let i = 0; i < rest; i++) {
+    let r = Math.random() * weightSum;
+    let chosen: TownshipName = REST_TOWNSHIPS[0];
+    for (let j = 0; j < REST_TOWNSHIPS.length; j++) {
+      r -= restWeights[j];
+      if (r <= 0) {
+        chosen = REST_TOWNSHIPS[j];
+        break;
+      }
+    }
+    assignments.push(chosen);
+  }
+
+  return faker.helpers.shuffle(assignments).slice(0, total);
+}
+
+function groupByTownship<T>(
+  items: T[],
+  townshipOf: (item: T) => TownshipName | null
+): Map<TownshipName, T[]> {
+  const map = new Map<TownshipName, T[]>();
+  for (const name of Object.keys(TOWNSHIP_CENTERS) as TownshipName[]) {
+    map.set(name, []);
+  }
+  for (const item of items) {
+    const name = townshipOf(item);
+    if (!name) continue;
+    map.get(name)!.push(item);
+  }
+  return map;
+}
+
+function pickFromTownship<T>(
+  grouped: Map<TownshipName, T[]>,
+  township: TownshipName,
+  fallback: T[]
+): T {
+  const local = grouped.get(township);
+  if (local && local.length > 0) return pick(local);
+  return pick(fallback);
+}
+
 
 /** Status mix: 85% DELIVERED · 10% CANCELLED · 5% REJECTED */
 function rollStatus(): 'DELIVERED' | 'CANCELLED' | 'REJECTED' {
@@ -231,6 +396,7 @@ function buildBasketItems(restaurantName: string) {
       quantity,
       unitPrice: base.price,
       restaurantName,
+      image: faker.helpers.arrayElement(REAL_FOOD_IMAGES),
     };
   });
 }
@@ -355,7 +521,7 @@ function finalizeCounts(slots: OrderSlot[], counts: Map<string, number>): OrderS
 
 async function seedBulkOrders() {
   console.log('\n📦 ════════════════════════════════════════════════');
-  console.log('   FoodDash — Bulk Orders (10k · ML rules)');
+  console.log('   FoodDash — Bulk Orders (10k · Insein RED skew)');
   console.log('════════════════════════════════════════════════\n');
 
   try {
@@ -368,9 +534,66 @@ async function seedBulkOrders() {
       '../src/models/RestaurantProfile'
     );
     const { default: RiderProfile } = await import('../src/models/RiderProfile');
+    const { default: MenuItem } = await import('../src/models/MenuItem');
 
     await dbConnect();
     console.log('✅ Connected to MongoDB via dbConnect()\n');
+
+    const [menuDocs, restDocs, custDocs, riderDocs] = await Promise.all([
+      MenuItem.find({}).select('_id').lean(),
+      RestaurantProfile.find({}).select('_id').lean(),
+      CustomerProfile.find({}).select('_id name').lean(),
+      RiderProfile.find({}).select('_id name').lean(),
+    ]);
+
+    if (menuDocs.length) {
+      await MenuItem.bulkWrite(
+        menuDocs.map((m) => ({
+          updateOne: {
+            filter: { _id: m._id },
+            update: { $set: { image: faker.helpers.arrayElement(REAL_FOOD_IMAGES) } },
+          },
+        }))
+      );
+    }
+    if (restDocs.length) {
+      await RestaurantProfile.bulkWrite(
+        restDocs.map((r) => ({
+          updateOne: {
+            filter: { _id: r._id },
+            update: {
+              $set: {
+                logoImage: faker.helpers.arrayElement(REAL_RESTAURANT_IMAGES),
+                coverImage: faker.helpers.arrayElement(REAL_RESTAURANT_IMAGES),
+              },
+            },
+          },
+        }))
+      );
+    }
+    if (custDocs.length) {
+      await CustomerProfile.bulkWrite(
+        custDocs.map((c) => ({
+          updateOne: {
+            filter: { _id: c._id },
+            update: { $set: { profileImage: uiAvatar(c.name || 'Customer') } },
+          },
+        }))
+      );
+    }
+    if (riderDocs.length) {
+      await RiderProfile.bulkWrite(
+        riderDocs.map((r) => ({
+          updateOne: {
+            filter: { _id: r._id },
+            update: { $set: { profileImage: uiAvatar(r.name || 'Rider') } },
+          },
+        }))
+      );
+    }
+    console.log(
+      `🖼  Images      : Unsplash + UI Avatars (${menuDocs.length} menus, ${restDocs.length} kitchens, ${custDocs.length} customers, ${riderDocs.length} riders)\n`
+    );
 
     const [customers, restaurants, riders] = await Promise.all([
       CustomerProfile.find({})
@@ -380,7 +603,7 @@ async function seedBulkOrders() {
         .select('restaurantId restaurantName township location')
         .lean<LeanRestaurant[]>(),
       RiderProfile.find({})
-        .select('riderId name vehicleType status riderCoords location')
+        .select('riderId name vehicleType status township riderCoords location')
         .lean<LeanRider[]>(),
     ]);
 
@@ -398,9 +621,29 @@ async function seedBulkOrders() {
     console.log(`🍽  Restaurants : ${restaurants.length}`);
     console.log(`🛵 Riders      : ${riders.length}\n`);
 
+    const restaurantsByTownship = groupByTownship(restaurants, (r) =>
+      normalizeTownshipName(r.township)
+    );
+    const ridersByTownship = groupByTownship(riders, (r) =>
+      normalizeTownshipName(r.township)
+    );
+
+    console.log('🏙  Restaurant coverage');
+    for (const name of Object.keys(TOWNSHIP_CENTERS) as TownshipName[]) {
+      const n = restaurantsByTownship.get(name)?.length || 0;
+      const r = ridersByTownship.get(name)?.length || 0;
+      if (n === 0) {
+        console.log(`   ⚠️  ${name.padEnd(16)} 0 kitchens — will fall back to any restaurant`);
+      } else {
+        console.log(`   ${name.padEnd(16)} ${String(n).padStart(3)} kitchens · ${r} riders`);
+      }
+    }
+    console.log('');
+
     const rangeStart = sixMonthsAgo();
     const rangeEnd = new Date();
     const slots = buildOrderSlots(customers, rangeStart, rangeEnd);
+    const townshipAssignments = buildTownshipAssignments(slots.length);
 
     const vipCustomers = new Set(
       slots.filter((s) => s.persona === 'VIP').map((s) => s.customer.customerId)
@@ -427,6 +670,7 @@ async function seedBulkOrders() {
     let rejectedCount = 0;
     let reviewedCount = 0;
     let bundleCount = 0;
+    const townshipOrderCounts = new Map<TownshipName, number>();
 
     const totalBatches = Math.ceil(slots.length / BATCH_SIZE);
     const seedStartedAt = Date.now();
@@ -444,8 +688,10 @@ async function seedBulkOrders() {
       for (let index = batchStart; index < batchEnd; index++) {
         const slot = slots[index];
         const customer = slot.customer;
-        const restaurant = pick(restaurants);
-        const rider = pick(riders);
+        const township = townshipAssignments[index] || 'Insein';
+        townshipOrderCounts.set(township, (townshipOrderCounts.get(township) || 0) + 1);
+        const restaurant = pickFromTownship(restaurantsByTownship, township, restaurants);
+        const rider = pickFromTownship(ridersByTownship, township, riders);
 
         const status = rollStatus();
         if (status === 'DELIVERED') deliveredCount += 1;
@@ -468,16 +714,14 @@ async function seedBulkOrders() {
         }
 
         const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-        const discount = faker.helpers.arrayElement([0, 0, 500, 1000]);
-        const surgePrice =
-          Math.random() < 0.2 ? faker.helpers.arrayElement([500, 1000, 1500]) : 0;
         const deliveryFee = faker.helpers.arrayElement([1000, 1500, 2000, 2500]);
+        const pricing = calculateOrderPricing({ subtotal, deliveryFee });
         const { distanceKm, prepTime, travelMins, durationMins } = rollTravelMetrics();
-        const distanceFee = Math.round(distanceKm * 150);
-        const totalAmount = Math.max(
-          0,
-          subtotal - discount + surgePrice + deliveryFee + distanceFee
-        );
+        const surgeChance = township === 'Insein' ? 0.55 : township === 'South Dagon' ? 0.04 : 0.2;
+        const surgePrice =
+          Math.random() < surgeChance
+            ? faker.helpers.arrayElement(township === 'Insein' ? [1000, 1500, 2000, 2500] : [500, 1000, 1500])
+            : 0;
 
         const createdAt = slot.createdAt;
         const completedAt = isCancelled
@@ -498,10 +742,8 @@ async function seedBulkOrders() {
             ? pick(customer.savedAddresses)
             : null;
 
-        const restaurantCoords = {
-          lat: restaurant.location?.lat ?? 16.8409,
-          lng: restaurant.location?.lng ?? 96.1735,
-        };
+        const restaurantCoords = restaurantCoordsOf(restaurant, township);
+        const dropoff = dropoffNearRestaurant(restaurantCoords);
 
         const riderCoords = assignedRider
           ? {
@@ -536,33 +778,30 @@ async function seedBulkOrders() {
           riderCoords,
           items,
           totals: {
-            subtotal,
-            deliveryFee: deliveryFee + distanceFee,
-            discount,
+            subtotal: pricing.subtotal,
+            tax: pricing.tax,
+            deliveryFee: pricing.deliveryFee,
+            platformFee: pricing.platformFee,
+            discount: 0,
             surgePrice,
-            total: totalAmount,
-            totalAmount,
-            township: restaurant.township || '',
+            restaurantCommission: pricing.restaurantCommission,
+            restaurantCommissionRate: pricing.restaurantCommissionRate,
+            total: pricing.total,
+            totalAmount: pricing.totalAmount,
+            riderEarning: pricing.riderEarning,
+            owedAmount: pricing.owedAmount,
+            township,
           },
-          deliveryAddress: saved
-            ? {
-                label: saved.label || 'Home',
-                address: saved.address || 'Yangon, Myanmar',
-                detail: saved.detail || '',
-                lat: saved.lat,
-                lng: saved.lng,
-                township: restaurant.township || '',
-              }
-            : {
-                label: 'Home',
-                address: `${restaurant.township || 'Yangon'}, Myanmar`,
-                detail: '',
-                lat: restaurantCoords.lat,
-                lng: restaurantCoords.lng,
-                township: restaurant.township || '',
-              },
+          deliveryAddress: {
+            label: saved?.label || 'Home',
+            address: saved?.address || `${township} Township, Yangon`,
+            detail: saved?.detail || `${township}, Yangon`,
+            lat: dropoff.lat,
+            lng: dropoff.lng,
+            township,
+          },
           paymentMethod: pick([...PAYMENT_METHODS]),
-          discount,
+          discount: 0,
           surgePrice,
           weather: pick([...WEATHER]),
           vehicleType: assignedRider?.vehicleType || rider.vehicleType || 'Motorcycle',
@@ -575,7 +814,7 @@ async function seedBulkOrders() {
               : status === 'REJECTED'
                 ? pick(REJECT_REASONS)
                 : '',
-          baseRiderFee: faker.number.int({ min: 1000, max: 2500 }),
+          baseRiderFee: pricing.riderEarning,
           tipAmount:
             status === 'DELIVERED' ? faker.helpers.arrayElement([0, 500, 1000]) : 0,
           rating,
@@ -647,6 +886,30 @@ async function seedBulkOrders() {
     console.log(`   👑 VIP customers   : ${vipCustomers.size}`);
     console.log(`   💤 Sleeping Beauty : ${sleepCustomers.size}`);
     console.log('   📈 durationMins    = prepTime + distanceKm×4 + variance');
+    console.log('   📍 Drop-offs       : jittered 150–900m from restaurant pins');
+    console.log('────────────────────────────────────────────────');
+    console.log('   Township distribution (target 50 / 25 / 5 / 20)');
+    const townshipOrder = [
+      'Insein',
+      'North Dagon',
+      'Bahan',
+      'South Dagon',
+      ...REST_TOWNSHIPS,
+    ] as TownshipName[];
+    for (const name of townshipOrder) {
+      const n = townshipOrderCounts.get(name) || 0;
+      const share = ((n / Math.max(1, insertedTotal)) * 100).toFixed(1);
+      const tag =
+        name === 'Insein'
+          ? '🔴 RED'
+          : name === 'South Dagon'
+            ? '🔵 COLD'
+            : name === 'North Dagon' || name === 'Bahan'
+              ? '🟠'
+              : '  ';
+      const bar = '█'.repeat(Math.max(0, Math.round(n / 120)));
+      console.log(`   ${tag} ${name.padEnd(14)} ${String(n).padStart(5)}  ${share.padStart(5)}%  ${bar}`);
+    }
     console.log('════════════════════════════════════════════════\n');
 
     console.log('🔌 All 10,000 orders inserted — disconnecting from MongoDB…');

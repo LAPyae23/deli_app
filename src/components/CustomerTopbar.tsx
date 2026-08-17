@@ -114,28 +114,59 @@ export default function CustomerTopbar({ onProfileClick, onSearch, user }: Custo
 
     async function loadNotifications() {
       try {
-        const res = await fetch('/api/orders');
+        const customerId = localStorage.getItem('fooddash_session_id');
+        if (!customerId) return;
+
+        const res = await fetch(
+          `/api/orders?customerId=${encodeURIComponent(customerId)}&limit=30`
+        );
         const data = await res.json();
         if (!res.ok || !data.success || cancelled) return;
 
         const orders = Array.isArray(data.orders) ? data.orders : [];
-        const active = orders.filter((o: { status?: string }) =>
-          ACTIVE_STATUSES.has(String(o.status || '').toUpperCase())
+        const cutoff = Date.now() - 3600000;
+        const visible = orders.filter(
+          (o: { status?: string; updatedAt?: string | Date }) => {
+            const status = String(o.status || '').toUpperCase();
+            if (ACTIVE_STATUSES.has(status)) return true;
+            if (status !== 'DELIVERED' && status !== 'CANCELLED') return false;
+            const updated = new Date(o.updatedAt || 0).getTime();
+            return Number.isFinite(updated) && updated > cutoff;
+          }
         );
 
         setNotifications(
-          active.slice(0, 8).map(
+          visible.slice(0, 8).map(
             (o: {
               _id?: string;
               id?: string;
               orderNumber?: string;
               status?: string;
               restaurantName?: string;
-            }) => ({
-              id: String(o._id || o.id || o.orderNumber || Math.random()),
-              title: `Order ${o.orderNumber || ''}`.trim() || 'Active order',
-              body: `${o.restaurantName || 'Restaurant'} · ${String(o.status || '').replace(/_/g, ' ')}`,
-            })
+            }) => {
+              const status = String(o.status || '').toUpperCase();
+              const restaurant = o.restaurantName || 'Restaurant';
+              const orderLabel = `Order ${o.orderNumber || ''}`.trim() || 'Order';
+              if (status === 'DELIVERED') {
+                return {
+                  id: String(o._id || o.id || o.orderNumber || Math.random()),
+                  title: `${orderLabel} arrived`,
+                  body: `${restaurant} · Delivered`,
+                };
+              }
+              if (status === 'CANCELLED') {
+                return {
+                  id: String(o._id || o.id || o.orderNumber || Math.random()),
+                  title: `${orderLabel} cancelled`,
+                  body: `${restaurant} · Cancelled`,
+                };
+              }
+              return {
+                id: String(o._id || o.id || o.orderNumber || Math.random()),
+                title: orderLabel || 'Active order',
+                body: `${restaurant} · ${status.replace(/_/g, ' ')}`,
+              };
+            }
           )
         );
       } catch {

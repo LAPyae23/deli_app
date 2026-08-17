@@ -13,6 +13,14 @@ const UserSchema = new mongoose.Schema({
     enum: ['CUSTOMER', 'RESTAURANT', 'RIDER', 'ADMIN'] 
   },
   displayId: { type: String },
+  /** Rider COD float — negative means the rider owes the platform */
+  walletBalance: { type: Number, default: 0 },
+  /** Auto-set when rider COD wallet hits -50,000 MMK */
+  isBlocked: { type: Boolean, default: false, index: true },
 }, { timestamps: true }); // Create, Update လုပ်တဲ့ အချိန်တွေကို မှတ်သားဖို့
 
-export default mongoose.models.User || mongoose.model('User', UserSchema);
+if (mongoose.models.User) {
+  delete mongoose.models.User;
+}
+
+export default mongoose.model('User', UserSchema);

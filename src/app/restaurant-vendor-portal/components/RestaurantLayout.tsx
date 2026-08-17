@@ -151,6 +151,8 @@ export default function RestaurantLayout() {
         if (restaurantId) params.set('restaurantId', restaurantId);
         else if (restaurantName) params.set('restaurantName', restaurantName);
         else return;
+        params.set('status', 'PENDING');
+        params.set('limit', '20');
 
         const res = await fetch(`/api/orders?${params.toString()}`);
         const data = await res.json();

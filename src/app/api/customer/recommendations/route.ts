@@ -1,61 +1,83 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
-import Order from '@/models/Order';
-import MenuItem from '@/models/MenuItem';
-
-const WEATHER_OPTIONS = ['Sunny', 'Rainy', 'Cloudy', 'Stormy'] as const;
-const DEFAULT_CUSTOMER_ID = 'demo-customer';
-
-type OrderItemLike = {
-  name?: string;
-  category?: string;
-  price?: number;
-  unitPrice?: number;
-  quantity?: number;
-  restaurantName?: string;
-  image?: string;
-};
+import RestaurantProfile from '@/models/RestaurantProfile';
+import { AI_PICKS_FALLBACK_ITEMS, getDishImage } from '@/lib/dishImages';
+import {
+  favoriteFromOrderHistory,
+  pickWeather,
+  sampleDistinctPicks,
+  sampleMenuItems,
+  weatherCopy,
+  type SampledMenu,
+} from '@/lib/aiPicksSample';
 
 type RecItem = {
+  id?: string;
   name: string;
   category: string;
   price: number;
   score: number;
   restaurantName?: string;
+  restaurantId?: string;
   image?: string;
+  imageAlt?: string;
   reasonTag?: string;
 };
 
-function pickWeather(): (typeof WEATHER_OPTIONS)[number] {
-  return WEATHER_OPTIONS[Math.floor(Math.random() * WEATHER_OPTIONS.length)];
-}
-
-function normalizeCategory(raw?: string): string {
-  const value = String(raw || '').trim();
-  if (!value) return 'Fast Food';
-  return value;
-}
-
-function toRecItem(
-  item: OrderItemLike,
-  score: number,
-  reasonTag?: string
+function toRec(
+  doc: SampledMenu,
+  restaurants: Map<string, string>,
+  extra?: Partial<RecItem>
 ): RecItem {
   return {
-    name: String(item.name || 'Item'),
-    category: normalizeCategory(item.category),
-    price: Number(item.price ?? item.unitPrice) || 0,
-    score,
-    restaurantName: item.restaurantName ? String(item.restaurantName) : undefined,
-    image: item.image ? String(item.image) : undefined,
-    reasonTag,
+    id: doc._id,
+    name: doc.name,
+    category: doc.category,
+    price: doc.price,
+    score: doc.isPopular ? 10 : 6,
+    restaurantId: doc.restaurantId,
+    restaurantName: doc.restaurantId
+      ? restaurants.get(doc.restaurantId)
+      : extra?.restaurantName,
+    image: doc.image || getDishImage(doc.name),
+    imageAlt: doc.imageAlt || doc.name,
+    ...extra,
   };
 }
 
-function topByScore(map: Map<string, RecItem>, limit: number): RecItem[] {
-  return Array.from(map.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+function fallbackItems(tag: string, restaurants: Map<string, string>): RecItem[] {
+  const anyName = restaurants.values().next().value as string | undefined;
+  return AI_PICKS_FALLBACK_ITEMS.filter((row) => {
+    if (tag === 'rain') return row.reasonTag === 'rain' || row.category === 'Burmese';
+    if (tag === 'Sunny') return row.reasonTag === 'Sunny' || row.category === 'Drinks' || row.category === 'Dessert';
+    if (tag === 'trending') return row.reasonTag === 'hlaing' || row.category === 'Fast Food';
+    if (tag === 'Burmese') return row.category === 'Burmese';
+    if (tag === 'Drinks') return row.category === 'Drinks' || row.category === 'Dessert';
+    if (tag === 'Dessert') return row.category === 'Dessert';
+    if (tag === 'Fast Food') return row.category === 'Fast Food';
+    return true;
+  }).map((row) => ({
+    name: row.name,
+    category: row.category,
+    price: row.price,
+    score: 8,
+    restaurantName: anyName || 'Hlaing Township Shan Noodle',
+    image: row.image,
+    imageAlt: row.name,
+    reasonTag: tag,
+  }));
+}
+
+function distinctByIdOrName(items: RecItem[]): RecItem[] {
+  const seen = new Set<string>();
+  const out: RecItem[] = [];
+  for (const item of items) {
+    const key = String(item.id || item.name).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }
 
 export async function GET(request: Request) {
@@ -63,165 +85,138 @@ export async function GET(request: Request) {
     await dbConnect();
 
     const { searchParams } = new URL(request.url);
-    const customerId =
-      searchParams.get('customerId')?.trim() || DEFAULT_CUSTOMER_ID;
-    const weather = pickWeather();
+    const customerId = searchParams.get('customerId')?.trim() || 'demo-customer';
+    const weather = pickWeather(searchParams.get('weather'));
+    const weatherMeta = weatherCopy(weather);
 
-    // --- Logic 1: Personalized by favorite category ---
-    const customerOrders = await Order.find({ customerId })
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean();
+    const [restaurantDocs, history] = await Promise.all([
+      RestaurantProfile.find({}).select('restaurantId restaurantName').lean(),
+      favoriteFromOrderHistory(customerId),
+    ]);
 
-    const categoryCounts = new Map<string, number>();
-    for (const order of customerOrders) {
-      const items = Array.isArray(order.items) ? (order.items as OrderItemLike[]) : [];
-      for (const item of items) {
-        const cat = normalizeCategory(item.category);
-        const qty = Number(item.quantity) || 1;
-        categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + qty);
-      }
+    const restaurants = new Map<string, string>();
+    for (const r of restaurantDocs) {
+      const id = String(r.restaurantId || '');
+      if (id) restaurants.set(id, String(r.restaurantName || ''));
     }
 
-    let favoriteCategory = 'Fast Food';
-    let favoriteCount = 0;
-    for (const [cat, count] of categoryCounts) {
-      if (count > favoriteCount) {
-        favoriteCategory = cat;
-        favoriteCount = count;
-      }
-    }
+    const sampled = await sampleDistinctPicks(weather);
 
-    // Prefer live MenuItems in that category; fall back to order-item aggregation
-    const menuMatches = await MenuItem.find({
-      isAvailable: true,
-      category: new RegExp(`^${favoriteCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
-    })
-      .sort({ isPopular: -1, stockQuantity: -1 })
-      .limit(8)
-      .lean();
+    const weatherBased = distinctByIdOrName(
+      sampled.weatherList.map((d) => toRec(d, restaurants, { reasonTag: weather }))
+    );
+    const trending = distinctByIdOrName(
+      sampled.trendingList.map((d) => toRec(d, restaurants, { reasonTag: 'hlaing' }))
+    );
 
-    let personalized: RecItem[] = menuMatches.map((m) => ({
-      name: m.name,
-      category: normalizeCategory(m.category),
-      price: Number(m.discountPrice ?? m.price) || 0,
-      score: m.isPopular ? 10 : 5,
-      image: m.image || undefined,
-      reasonTag: favoriteCategory,
-    }));
+    const usedIds = [
+      ...weatherBased.map((i) => String(i.id || '')),
+      ...trending.map((i) => String(i.id || '')),
+    ].filter(Boolean);
 
-    if (personalized.length === 0) {
-      const allOrders = await Order.find({}).select('items').limit(500).lean();
-      const byName = new Map<string, RecItem>();
-      for (const order of allOrders) {
-        const items = Array.isArray(order.items) ? (order.items as OrderItemLike[]) : [];
-        for (const item of items) {
-          if (normalizeCategory(item.category) !== favoriteCategory) continue;
-          const key = String(item.name || '').toLowerCase();
-          if (!key) continue;
-          const qty = Number(item.quantity) || 1;
-          const existing = byName.get(key);
-          if (existing) {
-            existing.score += qty;
-          } else {
-            byName.set(key, toRecItem(item, qty, favoriteCategory));
-          }
+    let personalizedDocs: SampledMenu[] = [];
+    if (history.favoriteCategory) {
+      const ordered = new Set(history.orderedNames);
+      const sampledFav = await sampleMenuItems(
+        { category: history.favoriteCategory },
+        8,
+        usedIds
+      );
+      personalizedDocs = sampledFav.filter(
+        (d) => !ordered.has(d.name.trim().toLowerCase())
+      );
+      if (personalizedDocs.length < 3) {
+        const extra = await sampleMenuItems({ category: history.favoriteCategory }, 8);
+        const seen = new Set(personalizedDocs.map((d) => d._id || d.name.toLowerCase()));
+        for (const doc of extra) {
+          const key = doc._id || doc.name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          personalizedDocs.push(doc);
+          if (personalizedDocs.length >= 6) break;
         }
       }
-      personalized = topByScore(byName, 6);
-    } else {
-      personalized = personalized.slice(0, 6);
     }
 
-    // --- Logic 2: Weather / context-aware ---
-    const weatherOrders = await Order.find({ weather })
-      .select('items')
-      .limit(400)
-      .lean();
+    const personalized = distinctByIdOrName(
+      (personalizedDocs.length > 0 ? personalizedDocs : sampled.recommendedList).map((d) =>
+        toRec(d, restaurants, { reasonTag: 'recommended' })
+      )
+    );
 
-    const weatherMap = new Map<string, RecItem>();
-    for (const order of weatherOrders) {
-      const items = Array.isArray(order.items) ? (order.items as OrderItemLike[]) : [];
-      for (const item of items) {
-        const key = String(item.name || '').toLowerCase();
-        if (!key) continue;
-        const qty = Number(item.quantity) || 1;
-        const existing = weatherMap.get(key);
-        if (existing) existing.score += qty;
-        else weatherMap.set(key, toRecItem(item, qty, weather));
-      }
-    }
-    let weatherBased = topByScore(weatherMap, 6);
+    const weatherItems =
+      weatherBased.length > 0
+        ? weatherBased
+        : fallbackItems(weather === 'Sunny' ? 'Sunny' : 'rain', restaurants);
+    const trendingItems =
+      trending.length > 0 ? trending : fallbackItems('trending', restaurants);
+    const recommendedItems =
+      personalized.length > 0
+        ? personalized
+        : fallbackItems(history.favoriteCategory || 'spicy', restaurants);
 
-    // Fallback if not enough rainy/weather data
-    if (weatherBased.length < 3) {
-      const anyOrders = await Order.find({}).select('items weather').limit(400).lean();
-      const fallback = new Map<string, RecItem>();
-      for (const order of anyOrders) {
-        const items = Array.isArray(order.items) ? (order.items as OrderItemLike[]) : [];
-        for (const item of items) {
-          const key = String(item.name || '').toLowerCase();
-          if (!key) continue;
-          const qty = Number(item.quantity) || 1;
-          const existing = fallback.get(key);
-          if (existing) existing.score += qty;
-          else fallback.set(key, toRecItem(item, qty, weather));
-        }
-      }
-      weatherBased = topByScore(fallback, 6);
-    }
+    const weatherFeatured = sampled.weatherItem
+      ? toRec(sampled.weatherItem, restaurants, { reasonTag: weather })
+      : weatherItems[0] || null;
+    const trendingFeatured = sampled.trendingItem
+      ? toRec(sampled.trendingItem, restaurants, { reasonTag: 'hlaing' })
+      : trendingItems.find((i) => i.id !== weatherFeatured?.id) || trendingItems[0] || null;
+    const recommendedFeatured =
+      recommendedItems.find(
+        (i) => i.id !== weatherFeatured?.id && i.id !== trendingFeatured?.id
+      ) || recommendedItems[0] || null;
 
-    // --- Logic 3: Trending / platform popularity ---
-    const trendingOrders = await Order.find({})
-      .select('items')
-      .sort({ createdAt: -1 })
-      .limit(500)
-      .lean();
-
-    const trendMap = new Map<string, RecItem>();
-    for (const order of trendingOrders) {
-      const items = Array.isArray(order.items) ? (order.items as OrderItemLike[]) : [];
-      for (const item of items) {
-        const key = String(item.name || '').toLowerCase();
-        if (!key) continue;
-        const qty = Number(item.quantity) || 1;
-        const existing = trendMap.get(key);
-        if (existing) existing.score += qty;
-        else trendMap.set(key, toRecItem(item, qty, 'trending'));
-      }
-    }
-    const trending = topByScore(trendMap, 3);
+    const favoriteCategory =
+      history.favoriteCategory || (weather === 'Sunny' ? 'Drinks' : 'Burmese');
+    const personalizedReason = history.hasOrderHistory
+      ? `Based on your past orders · you order a lot of ${favoriteCategory}`
+      : 'A fresh pick from the menu';
 
     return NextResponse.json({
       success: true,
       customerId,
       weather,
       favoriteCategory,
-      hasOrderHistory: customerOrders.length > 0,
+      hasOrderHistory: history.hasOrderHistory,
+      featured: {
+        weather: {
+          title: weatherMeta.title,
+          reason: weatherMeta.subtitle,
+          weather,
+          item: weatherFeatured,
+        },
+        trending: {
+          title: 'Trending in Hlaing',
+          reason: 'Popular Fast Food right now',
+          item: trendingFeatured,
+        },
+        recommended: {
+          title: 'Recommended for You',
+          reason: personalizedReason,
+          item: recommendedFeatured,
+        },
+      },
       personalized: {
         label: 'Based on your past orders',
-        reason:
-          customerOrders.length > 0
-            ? `Because you frequently buy ${favoriteCategory}`
-            : `Popular ${favoriteCategory} picks to get you started`,
-        items: personalized,
+        reason: personalizedReason,
+        items: recommendedItems.slice(0, 6),
       },
       weatherBased: {
         label: `Perfect for a ${weather} day`,
-        reason: `Most ordered across FoodDash when weather is ${weather}`,
+        reason: weatherMeta.subtitle,
         weather,
-        items: weatherBased,
+        items: weatherItems.slice(0, 6),
       },
       trending: {
-        label: 'Trending right now',
-        reason: 'Top 3 most frequently bought items on the platform',
-        items: trending,
+        label: 'Trending in Hlaing',
+        reason: 'Popular Fast Food right now',
+        items: trendingItems.slice(0, 6),
       },
     });
   } catch (error) {
     console.error('Customer recommendations GET error:', error);
     return NextResponse.json(
-      { success: false, message: 'Failed to build recommendations' },
+      { success: false, message: 'Failed to load recommendations' },
       { status: 500 }
     );
   }

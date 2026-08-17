@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Star, Minus, Plus } from 'lucide-react';
 import AppImage from '@/components/ui/AppImage';
 import { formatMMK } from '@/lib/currency';
+import { formatRating } from '@/lib/formatRating';
 import type { MenuItem } from '../types';
 
 interface MenuItemDetailProps {
@@ -63,28 +64,15 @@ export default function MenuItemDetail({ item, onClose, onAddToCart }: MenuItemD
       </div>
 
       <div className="relative h-52 w-full bg-muted sm:h-64 md:h-72">
-        {item.image?.startsWith('data:') ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={item.image}
-            alt={item.imageAlt || item.name}
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        ) : item.image ? (
-          <AppImage
-            src={item.image}
-            alt={item.imageAlt || item.name}
-            fill
-            className="object-cover"
-            sizes="(max-width: 1024px) 100vw, 70vw"
-            priority
-            unoptimized
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            No image
-          </div>
-        )}
+        <AppImage
+          src={item.image}
+          alt={item.imageAlt || item.name}
+          fill
+          fallbackSrc="/assets/images/no_image.png"
+          className="object-cover"
+          sizes="(max-width: 1024px) 100vw, 70vw"
+          priority
+        />
       </div>
 
       <div className="space-y-4 px-4 py-5 sm:px-6 sm:py-6">
@@ -107,7 +95,7 @@ export default function MenuItemDetail({ item, onClose, onAddToCart }: MenuItemD
             />
           ))}
           <span className="ml-1 text-xs font-semibold text-muted-foreground">
-            {(item.rating || 0).toFixed(1)}
+            {formatRating(item.rating)}
           </span>
           {item.category && (
             <span className="ml-2 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">

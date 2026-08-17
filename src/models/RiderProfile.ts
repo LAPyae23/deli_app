@@ -35,6 +35,10 @@ const RiderProfileSchema = new mongoose.Schema(
       default: 'APPROVED',
       index: true,
     },
+    /** Rider COD float — negative means the rider owes the platform */
+    walletBalance: { type: Number, default: 0 },
+    /** Auto-set when rider COD wallet hits -50,000 MMK; blocked riders get no new orders */
+    isBlocked: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );

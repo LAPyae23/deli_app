@@ -17,6 +17,7 @@ const OrderSchema = new mongoose.Schema(
       lng: { type: Number },
     },
     riderId: { type: String },
+    unassigned: { type: Boolean, default: true },
     riderName: { type: String },
     riderCoords: {
       lat: { type: Number },
@@ -51,7 +52,7 @@ const OrderSchema = new mongoose.Schema(
     rating: { type: Number, min: 1, max: 5 },
     review: { type: String },
     baseRiderFee: { type: Number },
-    tipAmount: { type: Number },
+    tipAmount: { type: Number, default: 0 },
     distanceKm: { type: Number, default: 3.5 },
     // Total end-to-end time ≈ prepTime + travelMins
     durationMins: { type: Number, default: 30 },
@@ -73,6 +74,18 @@ const OrderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ status: 1, createdAt: -1 });
+OrderSchema.index({ customerId: 1, createdAt: -1 });
+OrderSchema.index({ restaurantId: 1, createdAt: -1 });
+OrderSchema.index({ restaurantName: 1, createdAt: -1 });
+OrderSchema.index({ riderId: 1, status: 1, completedAt: -1 });
+OrderSchema.index({ restaurantRating: 1 });
+OrderSchema.index({ restaurantId: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ customerId: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ riderId: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ status: 1, unassigned: 1, createdAt: -1 });
 
 if (mongoose.models.Order) {
   delete mongoose.models.Order;

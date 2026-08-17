@@ -232,7 +232,7 @@ export default function AddMenuModal({
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-semibold">Price ($)</label>
+                <label className="mb-1.5 block text-sm font-semibold">Price (MMK)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -248,7 +248,7 @@ export default function AddMenuModal({
 
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="mb-1.5 block text-sm font-semibold">Discount ($)</label>
+                <label className="mb-1.5 block text-sm font-semibold">Discount (MMK)</label>
                 <input
                   type="number"
                   step="0.01"

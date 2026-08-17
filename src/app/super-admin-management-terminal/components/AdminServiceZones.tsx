@@ -23,16 +23,16 @@ const YANGON_CENTER: [number, number] = [16.8409, 96.1735];
 
 /** Soft township rings for context (shops are the primary markers) */
 const TOWNSHIP_ZONES = [
-  { name: 'South Dagon', lat: 16.8512, lng: 96.2128, radius: 1800, color: '#0878D1' },
-  { name: 'Bahan', lat: 16.8156, lng: 96.1536, radius: 1600, color: '#E62429' },
-  { name: 'Kyauktada', lat: 16.7738, lng: 96.1621, radius: 1200, color: '#16A34A' },
-  { name: 'Pabedan', lat: 16.7785, lng: 96.1558, radius: 1100, color: '#D97706' },
-  { name: 'Latha', lat: 16.7758, lng: 96.1502, radius: 1100, color: '#1769AA' },
-  { name: 'Lanmadaw', lat: 16.773, lng: 96.142, radius: 1200, color: '#7C3AED' },
-  { name: 'Sanchaung', lat: 16.8068, lng: 96.1334, radius: 1500, color: '#E62429' },
-  { name: 'Mayangone', lat: 16.868, lng: 96.152, radius: 1800, color: '#0878D1' },
-  { name: 'South Okkalapa', lat: 16.847, lng: 96.182, radius: 1600, color: '#16A34A' },
-  { name: 'North Okkalapa', lat: 16.88, lng: 96.158, radius: 1600, color: '#D97706' },
+  { name: 'Insein', lat: 16.895, lng: 96.095, radius: 1800, color: '#E62429' },
+  { name: 'South Dagon', lat: 16.825, lng: 96.22, radius: 2000, color: '#0878D1' },
+  { name: 'Hlaing', lat: 16.845, lng: 96.12, radius: 1400, color: '#16A34A' },
+  { name: 'Kamaryut', lat: 16.83, lng: 96.13, radius: 1300, color: '#D97706' },
+  { name: 'Bahan', lat: 16.81, lng: 96.15, radius: 1400, color: '#1769AA' },
+  { name: 'Yankin', lat: 16.84, lng: 96.16, radius: 1300, color: '#7C3AED' },
+  { name: 'Mingaladon', lat: 16.925, lng: 96.135, radius: 2200, color: '#16A34A' },
+  { name: 'North Dagon', lat: 16.865, lng: 96.195, radius: 1800, color: '#D97706' },
+  { name: 'Mayangone', lat: 16.87, lng: 96.155, radius: 1600, color: '#0878D1' },
+  { name: 'Thingangyun', lat: 16.835, lng: 96.185, radius: 1500, color: '#1769AA' },
 ];
 
 type MapRestaurant = {

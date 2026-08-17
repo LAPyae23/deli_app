@@ -30,6 +30,11 @@ const CustomerProfileSchema = new mongoose.Schema(
     hasStreakReward: { type: Boolean, default: false },
     streakDiscountPercent: { type: Number, default: 0 },
     streakVoucherCode: { type: String, default: '' },
+
+    /** Admin-granted RFM promo */
+    hasPromo: { type: Boolean, default: false },
+    promoCode: { type: String, default: '' },
+    promoDiscountPercent: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

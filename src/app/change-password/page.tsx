@@ -105,7 +105,7 @@ export default function ChangePasswordPage() {
           <form onSubmit={handleSubmit} className="space-y-4 p-6">
             <p className="text-xs leading-relaxed text-muted-foreground">
               Use at least 8 characters with uppercase, lowercase, number, and special
-              character (@$!%*?&).
+              character (@$!%*?&#).
             </p>
 
             <div>

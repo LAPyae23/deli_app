@@ -154,9 +154,9 @@
   50% { opacity: 0.4; }
 }
 
-@keyframes slideUp {
-  from { transform: translateY(100%); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 
 @keyframes fadeIn {
@@ -171,6 +171,9 @@
 
 .animate-slide-up {
   animation: slideUp 0.3s ease forwards;
+}
+.animate-slide-in-right {
+  animation: slideInRight 0.28s ease forwards;
 }
 
 .animate-fade-in {

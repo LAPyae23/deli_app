@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Printer,
   Loader2,
+  Bike,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatKyat } from '@/lib/currency';
@@ -32,17 +33,31 @@ interface OrderReceiptModalProps {
   onPaymentMethodChange: (method: PaymentMethod) => void;
   isPlacing: boolean;
   /** Returns order number on success, null on failure */
-  onConfirmPayment: () => Promise<string | null>;
+  onConfirmPayment: (
+    tipAmount: number,
+    promo?: { discount: number; promoApplied: boolean; promoCodeUsed?: string }
+  ) => Promise<string | null>;
   restaurantName?: string;
   formatMoney?: (amount: number) => string;
+  initialPromoCode?: string;
+  initialPromoPercent?: number;
   onDoneRedirect?: () => void;
   savedAddresses?: DeliveryAddressInfo[];
   onDeliveryAddressChange?: (address: DeliveryAddressInfo) => void;
   onOpenAddressPicker?: () => void;
 }
 
+const TIP_PRESETS = [0, 500, 1000] as const;
+type TipChoice = 0 | 500 | 1000 | 'custom';
+
 function defaultMoney(n: number) {
   return formatKyat(n);
+}
+
+function parseCustomTip(raw: string) {
+  const n = Number(String(raw).replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(50_000, Math.round(n));
 }
 
 export default function OrderReceiptModal({
@@ -61,6 +76,8 @@ export default function OrderReceiptModal({
   onConfirmPayment,
   restaurantName,
   formatMoney = defaultMoney,
+  initialPromoCode = '',
+  initialPromoPercent = 0,
   onDoneRedirect,
   savedAddresses = [],
   onDeliveryAddressChange,
@@ -72,6 +89,8 @@ export default function OrderReceiptModal({
   const [slipTotal, setSlipTotal] = useState(0);
   const [slipPayment, setSlipPayment] = useState<PaymentMethod>('cash');
   const [locating, setLocating] = useState(false);
+  const [tipChoice, setTipChoice] = useState<TipChoice>(0);
+  const [customTip, setCustomTip] = useState('');
   const [slipMeta, setSlipMeta] = useState({
     subtotal: 0,
     deliveryFee: 0,
@@ -80,18 +99,97 @@ export default function OrderReceiptModal({
     restaurantName: '',
     addressLabel: '',
     addressLine: '',
+    tipAmount: 0,
+    discount: 0,
   });
+  const [promoInput, setPromoInput] = useState('');
+  const [appliedPercent, setAppliedPercent] = useState(0);
+  const [appliedCode, setAppliedCode] = useState('');
+  const [promoApplied, setPromoApplied] = useState(false);
+  const [grantedPromo, setGrantedPromo] = useState<{
+    hasPromo: boolean;
+    promoCode: string;
+    promoDiscountPercent: number;
+  } | null>(null);
+  const [streakVoucher, setStreakVoucher] = useState<{
+    hasStreakReward: boolean;
+    streakVoucherCode: string;
+    streakDiscountPercent: number;
+  } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setStep('checkout');
       setOrderNumber('');
       setLocating(false);
+      setTipChoice(0);
+      setCustomTip('');
+      setPromoInput('');
+      setAppliedPercent(0);
+      setAppliedCode('');
+      setPromoApplied(false);
+      if (initialPromoCode && Number(initialPromoPercent) > 0) {
+        setPromoInput(initialPromoCode);
+        setAppliedCode(initialPromoCode);
+        setAppliedPercent(Number(initialPromoPercent));
+        setPromoApplied(true);
+      }
     }
+  }, [isOpen, initialPromoCode, initialPromoPercent]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    async function loadVoucher() {
+      try {
+        const customerId = localStorage.getItem('fooddash_session_id');
+        if (!customerId) {
+          if (!cancelled) {
+            setStreakVoucher(null);
+            setGrantedPromo(null);
+          }
+          return;
+        }
+        const res = await fetch(
+          `/api/customer/profile?customerId=${encodeURIComponent(customerId)}`
+        );
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+        const profile = data.profile || {};
+        setStreakVoucher({
+          hasStreakReward: Boolean(profile.hasStreakReward),
+          streakVoucherCode: String(profile.streakVoucherCode || ''),
+          streakDiscountPercent: Number(profile.streakDiscountPercent) || 0,
+        });
+        setGrantedPromo({
+          hasPromo: Boolean(profile.hasPromo),
+          promoCode: String(profile.promoCode || ''),
+          promoDiscountPercent: Number(profile.promoDiscountPercent) || 0,
+        });
+      } catch {
+        if (!cancelled) {
+          setStreakVoucher(null);
+          setGrantedPromo(null);
+        }
+      }
+    }
+
+    loadVoucher();
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
 
+  const tipAmount =
+    tipChoice === 'custom' ? parseCustomTip(customTip) : Number(tipChoice) || 0;
+  const discountAmount = promoApplied
+    ? Math.max(0, Math.round(subtotal * (appliedPercent / 100)))
+    : 0;
+  const checkoutTotal = Math.max(0, subtotal + tax + deliveryFee - discountAmount);
+  const grandTotal = checkoutTotal + tipAmount + (Number(platformFee) || 0);
   const itemCount = items.reduce((s, i) => s + i.quantity, 0);
   const addressOptions =
     savedAddresses.length > 0
@@ -99,6 +197,51 @@ export default function OrderReceiptModal({
         ? savedAddresses
         : [deliveryAddress, ...savedAddresses]
       : [deliveryAddress];
+
+  const applyPromoCode = (code: string, percent: number) => {
+    const clean = String(code || '').trim();
+    const pct = Number(percent) || 0;
+    if (!clean || pct <= 0) {
+      toast.error('Invalid promo code');
+      return;
+    }
+    setPromoInput(clean);
+    setAppliedCode(clean);
+    setAppliedPercent(pct);
+    setPromoApplied(true);
+    toast.success(`${pct}% off applied`);
+  };
+
+  const applyPromo = () => {
+    const entered = promoInput.trim().toUpperCase();
+    const adminCode = String(grantedPromo?.promoCode || '').trim().toUpperCase();
+    const streakCode = String(streakVoucher?.streakVoucherCode || '').trim().toUpperCase();
+
+    if (
+      grantedPromo?.hasPromo &&
+      adminCode &&
+      entered === adminCode &&
+      Number(grantedPromo.promoDiscountPercent) > 0
+    ) {
+      applyPromoCode(grantedPromo.promoCode, grantedPromo.promoDiscountPercent);
+      return;
+    }
+
+    if (
+      streakVoucher?.hasStreakReward &&
+      streakCode &&
+      entered === streakCode &&
+      Number(streakVoucher.streakDiscountPercent) > 0
+    ) {
+      applyPromoCode(streakVoucher.streakVoucherCode, streakVoucher.streakDiscountPercent);
+      return;
+    }
+
+    toast.error('Invalid promo code');
+    setPromoApplied(false);
+    setAppliedPercent(0);
+    setAppliedCode('');
+  };
 
   const useCurrentLocation = () => {
     if (!onDeliveryAddressChange) return;
@@ -175,18 +318,24 @@ export default function OrderReceiptModal({
     // Snapshot before parent clears cart
     const snapshot = {
       items: [...items],
-      total,
+      total: grandTotal,
       subtotal,
       deliveryFee,
       platformFee,
       tax,
+      tipAmount,
+      discount: discountAmount,
       payment: paymentMethod,
       restaurantName: restaurantName || '',
       addressLabel: deliveryAddress.label,
       addressLine: deliveryAddress.address,
     };
 
-    const number = await onConfirmPayment();
+    const number = await onConfirmPayment(tipAmount, {
+      discount: discountAmount,
+      promoApplied: promoApplied && discountAmount > 0,
+      promoCodeUsed: promoApplied ? appliedCode : '',
+    });
     if (!number) return;
 
     setOrderNumber(number);
@@ -201,6 +350,8 @@ export default function OrderReceiptModal({
       restaurantName: snapshot.restaurantName,
       addressLabel: snapshot.addressLabel,
       addressLine: snapshot.addressLine,
+      tipAmount: snapshot.tipAmount,
+      discount: snapshot.discount,
     });
     setStep('slip');
   };
@@ -305,6 +456,18 @@ export default function OrderReceiptModal({
                     {formatMoney(slipMeta.platformFee + slipMeta.tax)}
                   </span>
                 </div>
+                {slipMeta.discount > 0 && (
+                  <div className="flex justify-between text-danger">
+                    <span>- Discount</span>
+                    <span className="font-tabular">-{formatMoney(slipMeta.discount)}</span>
+                  </div>
+                )}
+                {slipMeta.tipAmount > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Rider tip</span>
+                    <span className="font-tabular">{formatMoney(slipMeta.tipAmount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center pt-2">
                   <span className="font-bold">Grand Total</span>
                   <span className="text-lg font-bold font-tabular text-customer">
@@ -430,22 +593,146 @@ export default function OrderReceiptModal({
             </div>
           </div>
 
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <Bike className="h-4 w-4 text-customer" />
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Tip Rider
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {TIP_PRESETS.map((amount) => {
+                const selected = tipChoice === amount;
+                return (
+                  <button
+                    key={amount}
+                    type="button"
+                    disabled={isPlacing}
+                    onClick={() => setTipChoice(amount)}
+                    className={`rounded-xl border-2 px-3 py-2.5 text-sm font-semibold transition-all ${
+                      selected
+                        ? 'border-customer bg-orange-50/60 text-customer'
+                        : 'border-border bg-muted/30 text-foreground hover:border-customer/40'
+                    }`}
+                  >
+                    {amount === 0 ? 'No Tip' : formatMoney(amount)}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                disabled={isPlacing}
+                onClick={() => setTipChoice('custom')}
+                className={`rounded-xl border-2 px-3 py-2.5 text-sm font-semibold transition-all ${
+                  tipChoice === 'custom'
+                    ? 'border-customer bg-orange-50/60 text-customer'
+                    : 'border-border bg-muted/30 text-foreground hover:border-customer/40'
+                }`}
+              >
+                Custom
+              </button>
+            </div>
+            {tipChoice === 'custom' && (
+              <input
+                type="number"
+                min={0}
+                step={100}
+                inputMode="numeric"
+                placeholder="Enter tip amount (Ks)"
+                value={customTip}
+                disabled={isPlacing}
+                onChange={(e) => setCustomTip(e.target.value)}
+                className="input-field mt-2 w-full py-2.5 text-sm"
+              />
+            )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              100% of the tip goes to your rider.
+            </p>
+          </div>
+
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Promo Code
+            </p>
+            {grantedPromo?.hasPromo && grantedPromo.promoCode && (
+              <button
+                type="button"
+                disabled={isPlacing}
+                onClick={() =>
+                  applyPromoCode(grantedPromo.promoCode, grantedPromo.promoDiscountPercent)
+                }
+                className="w-full rounded-xl border border-fuchsia-300 bg-gradient-to-r from-fuchsia-50 to-amber-50 px-3 py-2.5 text-left text-sm font-semibold text-fuchsia-950 transition-opacity hover:opacity-90 disabled:opacity-60 dark:border-fuchsia-500/40 dark:from-fuchsia-950/50 dark:to-amber-950/30 dark:text-fuchsia-100"
+              >
+                🎉 You have a voucher: {grantedPromo.promoCode} (
+                {grantedPromo.promoDiscountPercent}% off) - Click to apply
+              </button>
+            )}
+            {streakVoucher?.hasStreakReward && streakVoucher.streakVoucherCode && (
+              <button
+                type="button"
+                disabled={isPlacing}
+                onClick={() =>
+                  applyPromoCode(
+                    streakVoucher.streakVoucherCode,
+                    streakVoucher.streakDiscountPercent
+                  )
+                }
+                className="w-full rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-left text-sm font-semibold text-amber-900 transition-opacity hover:opacity-90 disabled:opacity-60 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-100"
+              >
+                🎉 You have a voucher: {streakVoucher.streakVoucherCode} (
+                {streakVoucher.streakDiscountPercent}% off) - Click to apply
+              </button>
+            )}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={promoInput}
+                disabled={isPlacing}
+                onChange={(e) => setPromoInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    applyPromo();
+                  }
+                }}
+                placeholder="Promo Code"
+                className="input-field min-w-0 flex-1 py-2.5 text-sm uppercase"
+                autoCapitalize="characters"
+              />
+              <button
+                type="button"
+                disabled={isPlacing}
+                onClick={applyPromo}
+                className="flex-shrink-0 rounded-xl border border-border bg-muted px-4 py-2.5 text-sm font-bold text-foreground transition-colors hover:bg-border disabled:opacity-60"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-1.5 text-sm border-t border-border pt-3">
             {[
               { label: 'Subtotal', value: subtotal },
               { label: 'Delivery fee', value: deliveryFee },
               { label: 'Platform fee', value: platformFee },
               { label: 'Tax (8%)', value: tax },
+              ...(tipAmount > 0 ? [{ label: 'Rider tip', value: tipAmount }] : []),
             ].map((row) => (
               <div key={row.label} className="flex justify-between">
                 <span className="text-muted-foreground">{row.label}</span>
                 <span className="font-semibold font-tabular">{formatMoney(row.value)}</span>
               </div>
             ))}
+            {discountAmount > 0 && (
+              <div className="flex justify-between text-danger">
+                <span>- Discount</span>
+                <span className="font-semibold font-tabular">-{formatMoney(discountAmount)}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center pt-2 border-t border-border">
               <span className="text-base font-bold text-foreground">Grand Total</span>
               <span className="text-lg font-bold font-tabular text-customer">
-                {formatMoney(total)}
+                {formatMoney(grandTotal)}
               </span>
             </div>
           </div>
@@ -555,7 +842,7 @@ export default function OrderReceiptModal({
                 Placing order…
               </span>
             ) : (
-              `Confirm Payment & Place Order · ${formatMoney(total)}`
+              `Confirm Payment & Place Order · ${formatMoney(grandTotal)}`
             )}
           </button>
         </div>

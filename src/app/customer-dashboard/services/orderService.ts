@@ -6,6 +6,10 @@ export type PlaceOrderPayload = {
   deliveryAddress: DeliveryAddressInfo;
   paymentMethod: string;
   restaurantName?: string;
+  restaurantId?: string;
+  tipAmount?: number;
+  discount?: number;
+  promoCodeUsed?: string;
 };
 
 export type PlaceOrderResponse = {
@@ -18,7 +22,14 @@ export type PlaceOrderResponse = {
 
 export async function placeOrder(payload: PlaceOrderPayload): Promise<PlaceOrderResponse> {
   const customerId = localStorage.getItem('fooddash_session_id') || '';
-  const body = { ...payload, customerId };
+  const body = {
+    ...payload,
+    customerId,
+    restaurantId: payload.restaurantId || '',
+    discount: payload.discount ?? payload.totals?.discount ?? 0,
+    promoCodeUsed: payload.promoCodeUsed || payload.totals?.promoCodeUsed || '',
+    promoApplied: Boolean(payload.totals?.promoApplied),
+  };
 
   const res = await fetch('/api/orders', {
     method: 'POST',
@@ -31,5 +42,19 @@ export async function placeOrder(payload: PlaceOrderPayload): Promise<PlaceOrder
     throw new Error(errorBody?.message || 'Failed to place order. Please try again.');
   }
 
-  return res.json() as Promise<PlaceOrderResponse>;
+  const result = (await res.json()) as PlaceOrderResponse;
+
+  if (payload.totals.promoApplied) {
+    try {
+      await fetch('/api/customer/consume-promo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId }),
+      });
+    } catch (error) {
+      console.warn('Failed to consume promo after order', error);
+    }
+  }
+
+  return result;
 }

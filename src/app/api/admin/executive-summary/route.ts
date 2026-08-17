@@ -5,27 +5,15 @@ import User from '@/models/User';
 import RiderProfile from '@/models/RiderProfile';
 import RestaurantProfile from '@/models/RestaurantProfile';
 
-type LeanOrder = {
-  status?: string;
-  prepTime?: number;
-  travelMins?: number;
-  durationMins?: number;
-  distanceKm?: number;
-  restaurantName?: string;
-  customerId?: string;
-  customerName?: string;
-  customerOrderCount?: number;
-  createdAt?: Date | string | null;
-  deliveryAddress?: { township?: string } | null;
-  totals?: { total?: number; totalAmount?: number; township?: string } | null;
-};
-
 type RfmSegment = 'Top VIP' | 'Sleeping Beauty' | 'New/Normal';
 
-function orderGMV(order: LeanOrder): number {
-  const total = Number(order.totals?.total ?? order.totals?.totalAmount);
-  return Number.isFinite(total) ? total : 0;
-}
+const GMV_EXPR = {
+  $cond: [
+    { $in: ['$status', ['CANCELLED', 'REJECTED']] },
+    0,
+    { $ifNull: ['$totals.total', { $ifNull: ['$totals.totalAmount', 0] }] },
+  ],
+};
 
 function startOfLocalDay(d = new Date()): Date {
   const start = new Date(d);
@@ -56,6 +44,34 @@ function matchTownship(value: unknown, township: string) {
   return text.includes(township) || (short.length > 3 && text.includes(short));
 }
 
+type PlatformAll = {
+  totalGMV?: number;
+  slowPrep?: number;
+  longDuration?: number;
+  durationSum?: number;
+  durationN?: number;
+  activeOrders?: number;
+};
+
+type PlatformToday = {
+  todayGMV?: number;
+  todayOrders?: number;
+  todayCancelled?: number;
+  prepSum?: number;
+  prepN?: number;
+};
+
+type RfmCustomer = {
+  _id?: string;
+  customerName?: string;
+  orderCount?: number;
+  monetary?: number;
+  lastOrderAt?: Date;
+};
+
+type TownshipActive = { _id?: string; activeOrders?: number };
+type SlowRestaurant = { _id?: string; slowOrders?: number };
+
 /**
  * GET /api/admin/executive-summary
  * Compiles platform, RFM, and ops bottleneck metrics for the PDF report.
@@ -65,79 +81,165 @@ export async function GET() {
     await dbConnect();
     const now = new Date();
     const todayStart = startOfLocalDay(now);
+    const cancelled = ['CANCELLED', 'REJECTED'];
 
-    const [allOrders, todayOrders, riderUsers, onlineRiders, restaurants] =
-      await Promise.all([
-        Order.find({})
-          .select(
-            'status prepTime travelMins durationMins distanceKm restaurantName customerId customerName customerOrderCount createdAt deliveryAddress totals'
-          )
-          .lean() as Promise<LeanOrder[]>,
-        Order.find({ createdAt: { $gte: todayStart, $lte: now } })
-          .select('status prepTime totals')
-          .lean() as Promise<LeanOrder[]>,
-        User.countDocuments({ role: 'RIDER' }),
-        RiderProfile.countDocuments({ status: 'Online' }),
-        RestaurantProfile.find({}).select('restaurantName township').lean(),
-      ]);
+    const [
+      [platformAll],
+      [platformToday],
+      rfmCustomers,
+      townshipActive,
+      topSlowRestaurants,
+      riderUsers,
+      onlineRiders,
+      restaurants,
+    ] = await Promise.all([
+      Order.aggregate(
+        [
+          {
+            $group: {
+              _id: null,
+              totalGMV: { $sum: GMV_EXPR },
+              slowPrep: {
+                $sum: {
+                  $cond: [{ $gte: [{ $ifNull: ['$prepTime', 0] }, 30] }, 1, 0],
+                },
+              },
+              longDuration: {
+                $sum: {
+                  $cond: [{ $gte: [{ $ifNull: ['$durationMins', 0] }, 55] }, 1, 0],
+                },
+              },
+              durationSum: {
+                $sum: {
+                  $cond: [{ $gt: [{ $ifNull: ['$durationMins', 0] }, 0] }, '$durationMins', 0],
+                },
+              },
+              durationN: {
+                $sum: {
+                  $cond: [{ $gt: [{ $ifNull: ['$durationMins', 0] }, 0] }, 1, 0],
+                },
+              },
+              activeOrders: {
+                $sum: {
+                  $cond: [
+                    {
+                      $in: [
+                        '$status',
+                        ['PENDING', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'],
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ],
+        { allowDiskUse: true }
+      ) as Promise<PlatformAll[]>,
+      Order.aggregate([
+        { $match: { createdAt: { $gte: todayStart, $lte: now } } },
+        {
+          $group: {
+            _id: null,
+            todayGMV: { $sum: GMV_EXPR },
+            todayOrders: { $sum: 1 },
+            todayCancelled: {
+              $sum: {
+                $cond: [{ $in: ['$status', cancelled] }, 1, 0],
+              },
+            },
+            prepSum: {
+              $sum: {
+                $cond: [{ $gt: [{ $ifNull: ['$prepTime', 0] }, 0] }, '$prepTime', 0],
+              },
+            },
+            prepN: {
+              $sum: {
+                $cond: [{ $gt: [{ $ifNull: ['$prepTime', 0] }, 0] }, 1, 0],
+              },
+            },
+          },
+        },
+      ]) as Promise<PlatformToday[]>,
+      Order.aggregate(
+        [
+          { $match: { status: { $nin: cancelled } } },
+          {
+            $group: {
+              _id: {
+                $ifNull: [
+                  '$customerId',
+                  {
+                    $concat: [
+                      'name:',
+                      { $toLower: { $ifNull: ['$customerName', 'customer'] } },
+                    ],
+                  },
+                ],
+              },
+              customerName: { $last: '$customerName' },
+              orderCount: { $sum: 1 },
+              monetary: { $sum: GMV_EXPR },
+              lastOrderAt: { $max: '$createdAt' },
+            },
+          },
+        ],
+        { allowDiskUse: true }
+      ) as Promise<RfmCustomer[]>,
+      Order.aggregate([
+        {
+          $match: {
+            status: { $in: ['PENDING', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'] },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $ifNull: ['$deliveryAddress.township', '$totals.township'],
+            },
+            activeOrders: { $sum: 1 },
+          },
+        },
+      ]) as Promise<TownshipActive[]>,
+      Order.aggregate(
+        [
+          { $match: { prepTime: { $gte: 28 } } },
+          {
+            $group: {
+              _id: { $ifNull: ['$restaurantName', 'Unknown'] },
+              slowOrders: { $sum: 1 },
+            },
+          },
+          { $sort: { slowOrders: -1 } },
+          { $limit: 5 },
+        ],
+        { allowDiskUse: true }
+      ) as Promise<SlowRestaurant[]>,
+      User.countDocuments({ role: 'RIDER' }),
+      RiderProfile.countDocuments({ status: 'Online' }),
+      RestaurantProfile.find({}).select('restaurantName township').lean(),
+    ]);
 
-    const totalGMV = allOrders.reduce((s, o) => s + orderGMV(o), 0);
-    const todayGMV = todayOrders.reduce((s, o) => s + orderGMV(o), 0);
-    const todayOrderCount = todayOrders.length;
-
-    const todayCancelled = todayOrders.filter((o) => {
-      const s = String(o.status || '').toUpperCase();
-      return s === 'CANCELLED' || s === 'REJECTED';
-    }).length;
-
-    const prepTimes = todayOrders
-      .map((o) => Number(o.prepTime))
-      .filter((n) => Number.isFinite(n) && n > 0);
+    const totalGMV = Number(platformAll?.totalGMV) || 0;
+    const todayGMV = Number(platformToday?.todayGMV) || 0;
+    const todayOrderCount = Number(platformToday?.todayOrders) || 0;
+    const todayCancelled = Number(platformToday?.todayCancelled) || 0;
     const avgPrepTime =
-      prepTimes.length > 0
-        ? Math.round((prepTimes.reduce((a, b) => a + b, 0) / prepTimes.length) * 10) / 10
+      Number(platformToday?.prepN) > 0
+        ? Math.round(
+            (Number(platformToday?.prepSum) / Number(platformToday?.prepN)) * 10
+          ) / 10
         : 0;
 
-    // --- RFM segments ---
-    type Agg = {
-      customerId: string;
-      customerName: string;
-      orderCount: number;
-      monetary: number;
-      lastOrderAt: Date;
-    };
-    const byCustomer = new Map<string, Agg>();
-
-    for (const order of allOrders) {
-      const status = String(order.status || '').toUpperCase();
-      if (status === 'CANCELLED' || status === 'REJECTED') continue;
-
-      const customerId = String(order.customerId || '').trim();
-      const customerName = String(order.customerName || 'Customer').trim() || 'Customer';
-      const key = customerId || `name:${customerName.toLowerCase()}`;
-      const created = order.createdAt ? new Date(order.createdAt) : now;
-      const amount = orderGMV(order);
-
-      const existing = byCustomer.get(key);
-      if (!existing) {
-        byCustomer.set(key, {
-          customerId: customerId || key,
-          customerName,
-          orderCount: 1,
-          monetary: amount,
-          lastOrderAt: created,
-        });
-      } else {
-        existing.orderCount += 1;
-        existing.monetary += amount;
-        if (created > existing.lastOrderAt) {
-          existing.lastOrderAt = created;
-          existing.customerName = customerName || existing.customerName;
-        }
-      }
-    }
-
-    const customers = Array.from(byCustomer.values());
+    const customers = (rfmCustomers || []).map((c) => ({
+      customerId: String(c._id || ''),
+      customerName: String(c.customerName || 'Customer').trim() || 'Customer',
+      orderCount: Number(c.orderCount) || 0,
+      monetary: Number(c.monetary) || 0,
+      lastOrderAt: c.lastOrderAt ? new Date(c.lastOrderAt) : now,
+    }));
     const frequencies = customers.map((c) => c.orderCount).sort((a, b) => a - b);
     const monetaries = customers.map((c) => c.monetary).sort((a, b) => a - b);
     const recencies = customers
@@ -168,45 +270,31 @@ export async function GET() {
       else if ((isHighM || isHighF) && isHighR) segment = 'Sleeping Beauty';
       counts[segment] += 1;
 
-      // Align with ML churn heuristic: idle >60d + low frequency
       if (recencyDays > 60 && c.orderCount <= 1) churnedHeuristic += 1;
     }
 
     const totalCustomers = customers.length || 1;
-    const churnRate =
-      Math.round((churnedHeuristic / totalCustomers) * 1000) / 10;
+    const churnRate = Math.round((churnedHeuristic / totalCustomers) * 1000) / 10;
 
-    // --- Kitchen & operational bottlenecks ---
-    const slowPrep = allOrders.filter((o) => Number(o.prepTime) >= 30).length;
-    const longDuration = allOrders.filter((o) => Number(o.durationMins) >= 55).length;
-    const activeStatuses = new Set(['PENDING', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']);
-    const activeOrders = allOrders.filter((o) =>
-      activeStatuses.has(String(o.status || '').toUpperCase())
-    );
-
-    // Township pressure: active orders vs restaurants (proxy for kitchen load)
     const TOWNSHIPS = [
+      'Insein',
       'South Dagon',
+      'Hlaing',
+      'Kamaryut',
       'Bahan',
-      'Kyauktada',
-      'Pabedan',
-      'Latha',
-      'Lanmadaw',
-      'Sanchaung',
+      'Yankin',
+      'Mingaladon',
+      'North Dagon',
       'Mayangone',
-      'South Okkalapa',
-      'North Okkalapa',
+      'Thingangyun',
     ];
 
     const kitchenHotspots = TOWNSHIPS.map((township) => {
-      const zoneActive = activeOrders.filter((o) => {
-        const addr = o.deliveryAddress;
-        const totals = o.totals;
-        return (
-          matchTownship(addr?.township, township) ||
-          matchTownship(totals?.township, township)
-        );
-      }).length;
+      const zoneActive = (townshipActive || []).reduce((sum, row) => {
+        return matchTownship(row._id, township)
+          ? sum + (Number(row.activeOrders) || 0)
+          : sum;
+      }, 0);
       const zoneRestaurants = restaurants.filter((r) =>
         matchTownship(r.township, township)
       ).length;
@@ -220,23 +308,12 @@ export async function GET() {
       .sort((a, b) => b.pressure - a.pressure)
       .slice(0, 5);
 
-    const topSlowRestaurants = Object.entries(
-      allOrders.reduce((acc, o) => {
-        if (Number(o.prepTime) < 28) return acc;
-        const name = String(o.restaurantName || 'Unknown').trim() || 'Unknown';
-        acc[name] = (acc[name] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>)
-    )
-      .map(([name, slowOrders]) => ({ name, slowOrders }))
-      .sort((a, b) => b.slowOrders - a.slowOrders)
-      .slice(0, 5);
-
+    const durationN = Number(platformAll?.durationN) || 0;
     const avgDuration =
-      allOrders
-        .map((o) => Number(o.durationMins))
-        .filter((n) => Number.isFinite(n) && n > 0)
-        .reduce((a, b, _, arr) => a + b / arr.length, 0) || 0;
+      durationN > 0 ? Number(platformAll?.durationSum) / durationN : 0;
+    const activeOrders = Number(platformAll?.activeOrders) || 0;
+    const slowPrep = Number(platformAll?.slowPrep) || 0;
+    const longDuration = Number(platformAll?.longDuration) || 0;
 
     return NextResponse.json({
       success: true,
@@ -259,12 +336,15 @@ export async function GET() {
         churnRate,
       },
       operations: {
-        activeOrders: activeOrders.length,
+        activeOrders,
         slowPrepOrders: slowPrep,
         longDurationOrders: longDuration,
         avgDurationMins: Math.round(avgDuration * 10) / 10,
         kitchenHotspots,
-        topSlowRestaurants,
+        topSlowRestaurants: (topSlowRestaurants || []).map((r) => ({
+          name: String(r._id || 'Unknown').trim() || 'Unknown',
+          slowOrders: Number(r.slowOrders) || 0,
+        })),
         insight:
           kitchenHotspots[0] && kitchenHotspots[0].pressure >= 1.5
             ? `${kitchenHotspots[0].township} shows the highest kitchen pressure (${kitchenHotspots[0].pressure} active orders per restaurant).`
