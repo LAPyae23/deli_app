@@ -13,6 +13,11 @@ import {
 } from 'recharts';
 import { BarChart3, PieChart } from 'lucide-react';
 import { formatKyat } from '@/lib/currency';
+import OpsAndSentiment, {
+  type OpsTownship,
+  type ReviewKeyword,
+  type SentimentMix,
+} from './OpsAndSentiment';
 
 type TopRestaurant = {
   restaurantName: string;
@@ -127,9 +132,14 @@ function ChartCard({
   );
 }
 
+const EMPTY_SENTIMENT: SentimentMix = { positive: 0, neutral: 0, negative: 0 };
+
 export default function AdvancedAnalytics() {
   const [topRestaurants, setTopRestaurants] = useState<TopRestaurant[]>([]);
   const [statusDistribution, setStatusDistribution] = useState<StatusSlice[]>([]);
+  const [opsBreakdown, setOpsBreakdown] = useState<OpsTownship[]>([]);
+  const [sentimentMix, setSentimentMix] = useState<SentimentMix>(EMPTY_SENTIMENT);
+  const [topKeywords, setTopKeywords] = useState<ReviewKeyword[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -161,12 +171,39 @@ export default function AdvancedAnalytics() {
             })
           )
         );
+        setOpsBreakdown(
+          (Array.isArray(json.opsBreakdown) ? json.opsBreakdown : []).map(
+            (row: OpsTownship) => ({
+              township: String(row.township || 'Unknown'),
+              prep: Math.max(0, Number(row.prep) || 0),
+              wait: Math.max(0, Number(row.wait) || 0),
+              travel: Math.max(0, Number(row.travel) || 0),
+            })
+          )
+        );
+        const mix = json.sentimentMix || {};
+        setSentimentMix({
+          positive: Math.max(0, Number(mix.positive) || 0),
+          neutral: Math.max(0, Number(mix.neutral) || 0),
+          negative: Math.max(0, Number(mix.negative) || 0),
+        });
+        setTopKeywords(
+          (Array.isArray(json.topKeywords) ? json.topKeywords : []).map(
+            (row: ReviewKeyword) => ({
+              word: String(row.word || '').toLowerCase(),
+              count: Math.max(0, Number(row.count) || 0),
+            })
+          ).filter((row: ReviewKeyword) => row.word)
+        );
         setError('');
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load analytics');
           setTopRestaurants([]);
           setStatusDistribution([]);
+          setOpsBreakdown([]);
+          setSentimentMix(EMPTY_SENTIMENT);
+          setTopKeywords([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -190,7 +227,7 @@ export default function AdvancedAnalytics() {
         <div>
           <h2 className="text-lg font-bold text-foreground">Advanced Analytics</h2>
           <p className="text-xs text-muted-foreground">
-            Top restaurants by revenue and live order-status mix
+            Revenue, status mix, operational bottlenecks, and review sentiment
           </p>
         </div>
       </div>
@@ -298,6 +335,13 @@ export default function AdvancedAnalytics() {
           )}
         </ChartCard>
       </div>
+
+      <OpsAndSentiment
+        opsBreakdown={opsBreakdown}
+        sentimentMix={sentimentMix}
+        topKeywords={topKeywords}
+        loading={loading}
+      />
     </section>
   );
 }

@@ -40,4 +40,4 @@ turbo/
 public/uploads/*
 !public/uploads/.gitkeep
 
-.env.local
+.env

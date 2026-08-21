@@ -265,6 +265,48 @@ export default function CustomerDashboardPage() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreActiveOrder() {
+      const customerId = localStorage.getItem('fooddash_session_id') || '';
+      if (!customerId) return;
+
+      try {
+        const res = await fetch(
+          `/api/orders?customerId=${encodeURIComponent(customerId)}&limit=10`,
+          { cache: 'no-store' }
+        );
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+
+        const orders = Array.isArray(data.orders) ? data.orders : [];
+        const active = orders.find((raw: Record<string, unknown>) => {
+          const status = String(raw.status || '').toUpperCase();
+          return (
+            status === 'PENDING' ||
+            status === 'PLACED' ||
+            status === 'PREPARING' ||
+            status === 'READY' ||
+            status === 'OUT_FOR_DELIVERY'
+          );
+        });
+
+        const orderId = active ? String(active._id ?? active.id ?? '') : '';
+        if (!cancelled && orderId) {
+          setActiveOrderId(orderId);
+        }
+      } catch (error) {
+        console.warn('Failed to restore active order', error);
+      }
+    }
+
+    restoreActiveOrder();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Hydrate cart from localStorage once on mount
   useEffect(() => {
     try {

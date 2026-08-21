@@ -39,14 +39,15 @@
     "warning": "🚨 CRITICAL: DO NOT REMOVE OR MODIFY ABOVE DEPENDENCIES - Required for Next.js 15 TypeScript app functionality"
   },
   "scripts": {
-    "dev": "next dev -p 4028",
+    "dev": "next dev -p 4028 --turbo",
     "build": "next build",
-    "start": "next dev -p 4028",
+    "start": "next dev -p 4028 --turbo",
     "lint": "next lint",
     "lint:fix": "next lint --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md,json}\"",
     "serve": "next start",
     "type-check": "tsc --noEmit",
+    "test:apis": "tsx scripts/test-all-apis.ts",
     "seed": "tsx scripts/seed.ts",
     "seed:bulk-orders": "tsx scripts/seed-bulk-orders.ts",
     "seed:ai-picks": "tsx scripts/seed-ai-picks.ts"

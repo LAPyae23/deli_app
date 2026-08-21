@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import dbConnect from '@/lib/mongodb';
 import Message from '@/models/Message';
 import User from '@/models/User';
@@ -22,35 +23,6 @@ type Conversation = {
   updatedAt: string;
 };
 
-async function resolveContactName(contactId: string, contactRole: string): Promise<string> {
-  try {
-    if (contactRole === 'RESTAURANT') {
-      const profile = await RestaurantProfile.findOne({ restaurantId: contactId }).lean();
-      if (profile?.restaurantName) return String(profile.restaurantName);
-    }
-
-    const user = await User.findById(contactId).lean();
-    if (user) {
-      const name = `${user.firstName || ''} ${user.lastName || ''}`.trim();
-      if (name) return name;
-      if (user.email) return String(user.email);
-    }
-  } catch {
-    // fall through
-  }
-
-  const roleLabel =
-    contactRole === 'CUSTOMER'
-      ? 'Customer'
-      : contactRole === 'RIDER'
-        ? 'Rider'
-        : contactRole === 'RESTAURANT'
-          ? 'Restaurant'
-          : contactRole || 'User';
-
-  return `${roleLabel} · ${contactId.slice(-6)}`;
-}
-
 export async function GET() {
   try {
     await dbConnect();
@@ -63,7 +35,9 @@ export async function GET() {
         { receiverId: SUPPORT_ADMIN_ID },
       ],
     })
+      .select('senderId senderRole receiverId receiverRole text createdAt')
       .sort({ createdAt: -1 })
+      .limit(2000)
       .lean()) as LeanMessage[];
 
     const conversationMap = new Map<string, Conversation>();
@@ -97,12 +71,48 @@ export async function GET() {
       });
     }
 
-    const conversations = await Promise.all(
-      Array.from(conversationMap.values()).map(async (conv) => ({
-        ...conv,
-        contactName: await resolveContactName(conv.contactId, conv.contactRole),
-      }))
+    const rows = Array.from(conversationMap.values());
+    const restaurantIds = rows
+      .filter((row) => row.contactRole === 'RESTAURANT')
+      .map((row) => row.contactId);
+    const userIds = rows
+      .map((row) => row.contactId)
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+    const [restaurants, users] = await Promise.all([
+      restaurantIds.length
+        ? RestaurantProfile.find({ restaurantId: { $in: restaurantIds } })
+            .select('restaurantId restaurantName')
+            .lean()
+        : Promise.resolve([]),
+      userIds.length
+        ? User.find({ _id: { $in: userIds } })
+            .select('firstName lastName email')
+            .lean()
+        : Promise.resolve([]),
+    ]);
+
+    const restaurantNameById = new Map(
+      restaurants.map((r) => [String(r.restaurantId), String(r.restaurantName || '')])
     );
+    const userNameById = new Map(
+      users.map((u) => {
+        const name = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+        return [String(u._id), name || String(u.email || '')] as const;
+      })
+    );
+
+    const conversations = rows.map((conv) => {
+      const fromRestaurant = restaurantNameById.get(conv.contactId);
+      const fromUser = userNameById.get(conv.contactId);
+      return {
+        ...conv,
+        contactName:
+          fromRestaurant ||
+          fromUser ||
+          `${conv.contactRole || 'User'} · ${conv.contactId.slice(-6)}`,
+      };
+    });
 
     conversations.sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -111,9 +121,10 @@ export async function GET() {
     return NextResponse.json({ success: true, conversations });
   } catch (error) {
     console.error('Admin messages GET error:', error);
-    return NextResponse.json(
-      { success: false, message: 'Failed to fetch conversations' },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Failed to fetch conversations';
+    return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }

@@ -356,6 +356,56 @@ export default function RiderDashboardClient() {
     setSessionId(window.localStorage.getItem('fooddash_session_id') || '');
   }, []);
 
+  useEffect(() => {
+    if (!isBrowser()) return;
+    let cancelled = false;
+
+    async function restoreActiveDeliveries() {
+      const riderId = window.localStorage.getItem('fooddash_session_id') || '';
+      if (!riderId) return;
+
+      try {
+        const res = await fetch(
+          `/api/orders?riderId=${encodeURIComponent(riderId)}&limit=10`,
+          { cache: 'no-store' }
+        );
+        const data = await res.json();
+        if (!res.ok || !data.success || cancelled) return;
+
+        const orders = Array.isArray(data.orders) ? data.orders : [];
+        const restored = orders
+          .filter((raw: Record<string, unknown>) => {
+            const status = String(raw.status || '').toUpperCase();
+            return status === 'PREPARING' || status === 'READY' || status === 'OUT_FOR_DELIVERY';
+          })
+          .map((raw: Record<string, unknown>) => {
+            const mapped = mapApiOrderToDispatch(raw);
+            const status = String(raw.status || '').toUpperCase();
+            return {
+              ...mapped,
+              deliveryStatus:
+                status === 'OUT_FOR_DELIVERY' ? ('PICKED_UP' as const) : ('ACCEPTED' as const),
+            };
+          })
+          .filter((order: { id: string }) => Boolean(order.id));
+
+        if (cancelled) return;
+        setActiveDeliveries(restored);
+        if (restored.length > 0) {
+          setDutyStatus((prev) => (prev === 'OFFLINE' ? prev : 'DELIVERING'));
+          setActiveTab('routes');
+        }
+      } catch (error) {
+        console.warn('Failed to restore active deliveries', error);
+      }
+    }
+
+    restoreActiveDeliveries();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const loadDashboard = useCallback(async () => {
     if (!isBrowser()) return;
     try {
