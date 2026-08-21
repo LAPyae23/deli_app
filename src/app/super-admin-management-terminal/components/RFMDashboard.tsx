@@ -78,6 +78,9 @@ export default function RFMDashboard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('VIP');
   const [grantedIds, setGrantedIds] = useState<Set<string>>(new Set());
   const [grantingId, setGrantingId] = useState<string | null>(null);
+  const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
+  const [activeCustomer, setActiveCustomer] = useState<RfmCustomer | null>(null);
+  const [discountValue, setDiscountValue] = useState('20');
 
   useEffect(() => {
     let cancelled = false;
@@ -140,25 +143,29 @@ export default function RFMDashboard() {
 
   const tabMeta = TABS.find((t) => t.key === activeTab) || TABS[0];
 
-  async function grantPromo(customer: RfmCustomer) {
-    const percentRaw = window.prompt(
-      `Discount percentage for ${customer.customerName} (e.g. 20)`,
-      '20'
-    );
-    if (percentRaw == null) return;
+  function handlePromoClick(customer: RfmCustomer) {
+    setActiveCustomer(customer);
+    setDiscountValue('20');
+    setIsPromoModalOpen(true);
+  }
+
+  function closePromoModal() {
+    setIsPromoModalOpen(false);
+    setActiveCustomer(null);
+  }
+
+  async function grantPromo() {
+    const customer = activeCustomer;
+    if (!customer) return;
+
+    const percentRaw = discountValue;
     const discountPercent = Number(percentRaw);
     if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
       toast.error('Enter a percentage between 1 and 100');
       return;
     }
 
-    const codeRaw = window.prompt('Promo code (e.g. COMEBACK20)', 'COMEBACK20');
-    if (codeRaw == null) return;
-    const promoCode = codeRaw.trim().toUpperCase();
-    if (!promoCode) {
-      toast.error('Promo code is required');
-      return;
-    }
+    const promoCode = `COMEBACK${Math.round(discountPercent)}`;
 
     setGrantingId(customer.customerId);
     try {
@@ -179,6 +186,8 @@ export default function RFMDashboard() {
       toast.success(
         `Granted ${promoCode} (${discountPercent}% off) to ${customer.customerName}`
       );
+      setIsPromoModalOpen(false);
+      setActiveCustomer(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to grant promo');
     } finally {
@@ -363,7 +372,7 @@ export default function RFMDashboard() {
                             <button
                               type="button"
                               disabled={granted || busy}
-                              onClick={() => grantPromo(c)}
+                              onClick={() => handlePromoClick(c)}
                               className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                                 granted
                                   ? 'cursor-default bg-emerald-500/15 text-emerald-400'
@@ -392,6 +401,69 @@ export default function RFMDashboard() {
           )}
         </div>
       </div>
+
+      {isPromoModalOpen && activeCustomer ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+          onClick={closePromoModal}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rfm-promo-title"
+          >
+            <div className="border-b border-border px-5 py-4">
+              <p id="rfm-promo-title" className="text-sm font-bold text-foreground">
+                Grant promo code
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                One-time discount for {activeCustomer.customerName}
+              </p>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <label className="block text-xs font-semibold text-muted-foreground" htmlFor="rfm-discount">
+                Discount percentage
+              </label>
+              <input
+                id="rfm-discount"
+                type="number"
+                min={1}
+                max={100}
+                value={discountValue}
+                onChange={(event) => setDiscountValue(event.target.value)}
+                className="input-field h-10 w-full text-sm font-semibold"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Code will be COMEBACK{Math.round(Number(discountValue) || 20)}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+              <button
+                type="button"
+                onClick={closePromoModal}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={grantingId === activeCustomer.customerId}
+                onClick={() => void grantPromo()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-admin px-3 py-2 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+              >
+                {grantingId === activeCustomer.customerId ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <TicketPercent className="h-3.5 w-3.5" />
+                )}
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

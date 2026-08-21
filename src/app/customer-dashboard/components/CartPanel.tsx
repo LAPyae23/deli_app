@@ -12,7 +12,6 @@ import {
   Circle,
   CheckCircle2,
   ShoppingCart,
-  Briefcase,
   MapPin,
   Info,
 } from 'lucide-react';
@@ -267,7 +266,6 @@ export default function CartPanel({
   };
 
   const allSelected = items.length > 0 && selectedItems.length === items.length;
-  const cartCount = items.reduce((s, i) => s + i.quantity, 0);
 
   const toggleItem = (id: string) => {
     setSelectedItems((prev) =>
@@ -367,7 +365,7 @@ export default function CartPanel({
 
   return (
     <>
-      <aside className="w-full lg:w-[22rem] xl:w-96 bg-[#f5f5f5] lg:bg-card border-t lg:border-t-0 lg:border-l border-border flex flex-col lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] mt-4 lg:mt-0 rounded-xl lg:rounded-none overflow-hidden">
+      <aside className="w-full lg:w-[22rem] xl:w-96 bg-[#f5f5f5] lg:bg-card border-t lg:border-t-0 lg:border-l border-border flex flex-col h-[calc(100vh-4rem)] lg:sticky lg:top-16 mt-4 lg:mt-0 rounded-xl lg:rounded-none overflow-hidden min-h-0">
         {/* Header — matches shopping cart reference */}
         <div className="flex-shrink-0 bg-white border-b border-border px-3 py-3 flex items-center justify-between">
           <button
@@ -404,7 +402,8 @@ export default function CartPanel({
           </div>
         ) : (
           <>
-            <div className="flex-shrink-0 border-b border-border bg-white px-3 py-3">
+            <div className="flex-1 overflow-y-auto pb-6 scrollbar-hide min-h-0">
+            <div className="border-b border-border bg-white px-3 py-3">
               <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 p-3">
                 <MapPin className="mt-0.5 h-4 w-4 flex-shrink-0 text-customer" />
                 <div className="min-w-0 flex-1">
@@ -451,7 +450,7 @@ export default function CartPanel({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-3 space-y-3 pb-24">
+            <div className="p-3 space-y-3">
               {groups.map(([shopName, shopItems]) => {
                 const shopAllSelected = shopItems.every((i) => selectedItems.includes(i.id));
                 return (
@@ -709,95 +708,96 @@ export default function CartPanel({
               </div>
             )}
 
-            {/* Sticky bottom bar */}
-            <div className="relative flex-shrink-0">
-              <button
-                type="button"
-                className="absolute -top-12 right-4 w-11 h-11 rounded-full bg-customer text-white shadow-lg flex items-center justify-center hover:opacity-90 z-10"
-                aria-label="Orders"
-                onClick={() => toast.message(`${cartCount} items in cart`)}
-              >
-                <Briefcase className="w-5 h-5" />
-              </button>
-
-              <div className="border-t border-border bg-white px-3 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
-                {grantedPromo?.hasPromo && grantedPromo.promoCode && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      applyCartPromo(
-                        grantedPromo.promoCode,
-                        grantedPromo.promoDiscountPercent
-                      )
+            <div className="border-t border-border bg-white px-3 py-3">
+              {grantedPromo?.hasPromo && grantedPromo.promoCode && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyCartPromo(
+                      grantedPromo.promoCode,
+                      grantedPromo.promoDiscountPercent
+                    )
+                  }
+                  className="mb-2 w-full rounded-lg border border-fuchsia-300 bg-gradient-to-r from-fuchsia-50 to-amber-50 px-3 py-2 text-left text-[11px] font-bold text-fuchsia-950"
+                >
+                  🎉 You have a voucher: {grantedPromo.promoCode} (
+                  {grantedPromo.promoDiscountPercent}% off) - Click to apply
+                </button>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      tryApplyCartPromo();
                     }
-                    className="mb-2 w-full rounded-lg border border-fuchsia-300 bg-gradient-to-r from-fuchsia-50 to-amber-50 px-3 py-2 text-left text-[11px] font-bold text-fuchsia-950"
-                  >
-                    🎉 You have a voucher: {grantedPromo.promoCode} (
-                    {grantedPromo.promoDiscountPercent}% off) - Click to apply
-                  </button>
-                )}
-                <div className="mb-2 flex gap-2">
-                  <input
-                    type="text"
-                    value={promoInput}
-                    onChange={(e) => setPromoInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        tryApplyCartPromo();
-                      }
-                    }}
-                    placeholder="Promo Code"
-                    className="input-field min-w-0 flex-1 py-2 text-xs uppercase"
-                    autoCapitalize="characters"
-                  />
-                  <button
-                    type="button"
-                    onClick={tryApplyCartPromo}
-                    className="flex-shrink-0 rounded-lg border border-border bg-muted px-3 py-2 text-xs font-bold text-foreground"
-                  >
-                    Apply
-                  </button>
+                  }}
+                  placeholder="Promo Code"
+                  className="input-field min-w-0 flex-1 py-2 text-xs uppercase"
+                  autoCapitalize="characters"
+                />
+                <button
+                  type="button"
+                  onClick={tryApplyCartPromo}
+                  className="flex-shrink-0 rounded-lg border border-border bg-muted px-3 py-2 text-xs font-bold text-foreground"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+            </div>
+
+            <div className="shrink-0 bg-card border-t border-border p-4 sticky bottom-0 z-20">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  className="flex items-center gap-1.5 min-w-0"
+                  aria-pressed={allSelected}
+                >
+                  {allSelected ? (
+                    <CheckCircle2 className="w-5 h-5 text-customer flex-shrink-0" />
+                  ) : (
+                    <Circle className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                  )}
+                  <span className="text-xs font-semibold text-foreground whitespace-nowrap">
+                    Select All
+                  </span>
+                </button>
+              </div>
+              <div className="mb-3 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="font-semibold font-tabular text-foreground">
+                    {formatMMK(subtotal)}
+                  </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={toggleSelectAll}
-                    className="flex items-center gap-1.5 min-w-0"
-                    aria-pressed={allSelected}
-                  >
-                    {allSelected ? (
-                      <CheckCircle2 className="w-5 h-5 text-customer flex-shrink-0" />
-                    ) : (
-                      <Circle className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                    )}
-                    <span className="text-xs font-semibold text-foreground whitespace-nowrap">
-                      Select All
+                {discountAmount > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Discount</span>
+                    <span className="font-semibold font-tabular text-danger">
+                      - {formatMMK(discountAmount)}
                     </span>
-                  </button>
-
-                  <div className="flex-1 min-w-0 text-right px-1">
-                    {discountAmount > 0 && (
-                      <p className="text-[10px] font-semibold text-danger leading-none mb-0.5">
-                        - {formatMMK(discountAmount)}
-                      </p>
-                    )}
-                    <p className="text-[10px] text-muted-foreground leading-none mb-0.5">Total</p>
-                    <p className="text-sm font-bold font-tabular text-customer leading-tight truncate">
-                      {formatMMK(total)}
-                    </p>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={handleConfirmOrder}
-                    disabled={selectedItems.length === 0}
-                    className="flex-shrink-0 px-3.5 py-2.5 rounded-lg text-xs font-bold text-white bg-customer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
-                  >
-                    Checkout
-                  </button>
+                )}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-bold text-foreground">Total</span>
+                  <span className="font-bold font-tabular text-customer">
+                    {formatMMK(total)}
+                  </span>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={handleConfirmOrder}
+                disabled={selectedItems.length === 0}
+                className="w-full rounded-lg py-2.5 text-sm font-bold text-white bg-customer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
+              >
+                Checkout
+              </button>
             </div>
           </>
         )}

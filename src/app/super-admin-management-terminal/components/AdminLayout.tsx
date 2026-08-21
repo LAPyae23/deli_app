@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingBag, Store, Bike,
   Settings, LogOut, ChevronLeft, ChevronRight,
   SlidersVertical, MapPin, TriangleAlert, MessageSquare,
-  Download, FileText, Loader2, Search, UserRound,
+  Download, FileText, Loader2, Search, UserRound, Bug,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
@@ -24,6 +24,8 @@ import DataSyncStatus from './DataSyncStatus';
 import UserLookup from './UserLookup';
 import ShareAppQR from '@/components/ShareAppQR';
 import { downloadExecutiveSummaryPdf } from '@/lib/executiveSummaryPdf';
+import { fetchJsonLogged } from '@/lib/debugFetch';
+import { SUPPORT_ADMIN_ID } from '@/lib/support';
 
 type AdminTab =
   | 'overview'
@@ -262,6 +264,7 @@ export default function AdminLayout() {
   const [lastFetchTime, setLastFetchTime] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [testingApi, setTestingApi] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState(0);
   const [approvalNotifications, setApprovalNotifications] = useState<
     { id: string; title: string; body?: string; onClick?: () => void }[]
@@ -363,18 +366,25 @@ export default function AdminLayout() {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     async function loadStats() {
       try {
-        const res = await fetch('/api/admin/stats');
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load stats');
+        const data = await fetchJsonLogged('/api/admin/stats', 'loadStats', {
+          signal: controller.signal,
+        });
         if (!cancelled) {
           setAdminStats(data);
           setLastFetchTime(Date.now());
         }
       } catch (error) {
-        console.error('Failed to load admin stats', error);
+        if (cancelled || (error instanceof Error && error.name === 'AbortError')) return;
+        console.error('loadStats failed', {
+          url: '/api/admin/stats',
+          error,
+          name: error instanceof Error ? error.name : typeof error,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -382,9 +392,41 @@ export default function AdminLayout() {
     const interval = setInterval(loadStats, 30000);
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(interval);
     };
   }, []);
+
+  const handleTestApi = async () => {
+    setTestingApi(true);
+    const probes = [
+      { label: 'admin-stats', url: '/api/admin/stats' },
+      { label: 'admin-messages', url: '/api/admin/messages' },
+      {
+        label: 'inbox-thread',
+        url: `/api/messages?senderId=${encodeURIComponent(SUPPORT_ADMIN_ID)}&receiverId=test-contact`,
+      },
+    ];
+    console.group('[Test API] Admin connection probes');
+    try {
+      for (const probe of probes) {
+        try {
+          const data = await fetchJsonLogged(probe.url, `Test API ${probe.label}`);
+          console.log(`[Test API] ${probe.label} OK`, { url: probe.url, data });
+        } catch (error) {
+          console.error(`[Test API] ${probe.label} FAILED`, {
+            url: probe.url,
+            error,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      toast.success('Test API finished — check the browser console');
+    } finally {
+      console.groupEnd();
+      setTestingApi(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -480,6 +522,20 @@ export default function AdminLayout() {
                 {pendingApprovals} pending approvals
               </span>
             </div>
+            <button
+              type="button"
+              onClick={() => void handleTestApi()}
+              disabled={testingApi}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              title="Probe /api/admin/stats and inbox APIs — results in the browser console"
+            >
+              {testingApi ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Bug className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden xl:inline">{testingApi ? 'Testing…' : 'Test API'}</span>
+            </button>
             <button
               type="button"
               onClick={handleExecutiveSummaryPdf}

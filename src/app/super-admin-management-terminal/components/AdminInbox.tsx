@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useNotificationSound } from '@/hooks/useNotificationSound';
 import { SUPPORT_ADMIN_ID } from '@/lib/support';
+import { fetchJsonLogged } from '@/lib/debugFetch';
 
 const ADMIN_ID = SUPPORT_ADMIN_ID;
 const CONVERSATIONS_POLL_MS = 10_000;
@@ -120,18 +121,27 @@ export default function AdminInbox() {
   const loadConversations = useCallback(async (showSpinner = false) => {
     if (showSpinner) setIsLoadingConversations(true);
     try {
-      const res = await fetch('/api/admin/messages');
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load');
-      const list = Array.isArray(data.conversations) ? data.conversations : [];
+      const data = await fetchJsonLogged('/api/admin/messages', 'loadConversations');
+      if (data.success === false) {
+        throw new Error(String(data.message || 'Failed to load conversations'));
+      }
+      const list = Array.isArray(data.conversations)
+        ? (data.conversations as Conversation[])
+        : [];
       setConversations(list);
 
       setActiveContact((prev) => {
         if (!prev) return prev;
-        return list.find((c: Conversation) => c.contactId === prev.contactId) || prev;
+        return list.find((c) => c.contactId === prev.contactId) || prev;
       });
     } catch (error) {
-      console.error('Failed to load admin conversations', error);
+      if (error instanceof Error && error.name === 'AbortError') return;
+      console.error('loadConversations failed', {
+        url: '/api/admin/messages',
+        error,
+        name: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       if (showSpinner) setIsLoadingConversations(false);
     }
@@ -139,17 +149,21 @@ export default function AdminInbox() {
 
   const loadMessages = useCallback(
     async (contactId: string, showSpinner = false) => {
+      if (!contactId) return;
       if (showSpinner) setIsLoadingMessages(true);
+      const url = `/api/messages?${new URLSearchParams({
+        senderId: ADMIN_ID,
+        receiverId: contactId,
+      }).toString()}`;
       try {
-        const params = new URLSearchParams({
-          senderId: ADMIN_ID,
-          receiverId: contactId,
-        });
-        const res = await fetch(`/api/messages?${params.toString()}`);
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load chat');
+        const data = await fetchJsonLogged(url, 'loadMessages');
+        if (data.success === false) {
+          throw new Error(String(data.message || 'Failed to load chat'));
+        }
 
-        const nextMessages: ChatMessage[] = Array.isArray(data.messages) ? data.messages : [];
+        const nextMessages: ChatMessage[] = Array.isArray(data.messages)
+          ? (data.messages as ChatMessage[])
+          : [];
         if (
           prevMessageCount.current > 0 &&
           nextMessages.length > prevMessageCount.current
@@ -162,7 +176,14 @@ export default function AdminInbox() {
         prevMessageCount.current = nextMessages.length;
         setMessages(nextMessages);
       } catch (error) {
-        console.error('Failed to load admin chat', error);
+        if (error instanceof Error && error.name === 'AbortError') return;
+        console.error('loadMessages failed', {
+          url,
+          contactId,
+          error,
+          name: error instanceof Error ? error.name : typeof error,
+          message: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         if (showSpinner) setIsLoadingMessages(false);
       }
