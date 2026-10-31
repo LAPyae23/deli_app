@@ -1,91 +1,40 @@
-# Next.js
+# FoodDash
 
-A modern Next.js 15 application built with TypeScript and Tailwind CSS.
+A multi-role food delivery platform for Yangon. Customers, restaurants, riders, and admins work on one Next.js and MongoDB codebase, with live order tracking and analytics across 10,000+ orders.
 
-## 🚀 Features
+**Live demo:** https://deli-app-eta.vercel.app
 
-- **Next.js 15** - Latest version with improved performance and features
-- **React 19** - Latest React version with enhanced capabilities
-- **Tailwind CSS** - Utility-first CSS framework for rapid UI development
+For the full product and data science write-up, see [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
 
-## 🛠️ Installation
+## Portals
 
-1. Install dependencies:
-  ```bash
-  npm install
-  # or
-  yarn install
-  ```
+| Portal | What it does |
+| --- | --- |
+| **Customer** | Browse nearby restaurants, order in Kyat, track delivery on a live map, chat with the rider, and get personal food picks |
+| **Restaurant** | Manage the order queue, menu, stock, and store status, with revenue figures and kitchen insights |
+| **Rider** | Go online, accept jobs, follow the route, track earnings and COD wallet, and see where demand is high |
+| **Admin** | Monitor the platform, approve vendors and riders, set service zones and fees, and run analytics |
 
-2. Start the development server:
-  ```bash
-  npm run dev
-  # or
-  yarn dev
-  ```
-3. Open [http://localhost:4028](http://localhost:4028) with your browser to see the result.
+## Highlights
 
-## 📁 Project Structure
+- **Road-based tracking:** Leaflet maps with OSRM routes from kitchen to rider to customer
+- **Customer analytics:** RFM segmentation, Apriori market basket analysis, and churn metrics
+- **Delivery time estimates:** linear regression with R², MAE, and RMSE reporting
+- **Demand heatmap:** compares live orders with online riders by township to guide surge pay
+- **Built for scale:** MongoDB aggregation pipelines and compound indexes keep dashboards responsive across 10,000+ orders
 
-```
-nextjs/
-├── public/             # Static assets
-├── src/
-│   ├── app/            # App router components
-│   │   ├── layout.tsx  # Root layout component
-│   │   └── page.tsx    # Main page component
-│   ├── components/     # Reusable UI components
-│   ├── styles/         # Global styles and Tailwind configuration
-├── next.config.mjs     # Next.js configuration
-├── package.json        # Project dependencies and scripts
-├── postcss.config.js   # PostCSS configuration
-└── tailwind.config.js  # Tailwind CSS configuration
+## Tech stack
 
+Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS, MongoDB with Mongoose, Leaflet, OSRM, Recharts, simple-statistics, and Framer Motion.
+
+## Run locally
+
+Create a `.env` file with your own `MONGODB_URI`, then run:
+
+```bash
+npm install
+npm run seed
+npm run dev
 ```
 
-## 🧩 Page Editing
-
-You can start editing the page by modifying `src/app/page.tsx`. The page auto-updates as you edit the file.
-
-## 🎨 Styling
-
-This project uses Tailwind CSS for styling with the following features:
-- Utility-first approach for rapid development
-- Custom theme configuration
-- Responsive design utilities
-- PostCSS and Autoprefixer integration
-
-## 📦 Available Scripts
-
-- `npm run dev` - Start development server on port 4028
-- `npm run build` - Build the application for production
-- `npm run start` - Start the development server
-- `npm run serve` - Start the production server
-- `npm run lint` - Run ESLint to check code quality
-- `npm run lint:fix` - Fix ESLint issues automatically
-- `npm run format` - Format code with Prettier
-
-## 📱 Deployment
-
-Build the application for production:
-
-  ```bash
-  npm run build
-  ```
-
-## 📚 Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial
-
-You can check out the [Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## 🙏 Acknowledgments
-
-- Built with [Rocket.new](https://rocket.new)
-- Powered by Next.js and React
-- Styled with Tailwind CSS
-
-Built with ❤️ on Rocket.new
+Open http://localhost:4028.
