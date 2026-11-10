@@ -8,9 +8,47 @@ import {
   isRiderBlocked,
 } from '@/lib/riderWallet';
 import { pricingFromOrder } from '@/lib/orderPricing';
+import RestaurantProfile from '@/models/RestaurantProfile';
+import { forbidden, getSession, unauthorized, type Session } from '@/lib/auth';
+
+type OrderOwnership = {
+  customerId?: unknown;
+  restaurantId?: unknown;
+  restaurantName?: unknown;
+  riderId?: unknown;
+  unassigned?: unknown;
+};
+
+function isUnassigned(order: OrderOwnership) {
+  return order.unassigned === true || !String(order.riderId || '').trim();
+}
+
+/** Whether the signed-in user is a party to this order. */
+async function canAccessOrder(session: Session, order: OrderOwnership) {
+  switch (session.role) {
+    case 'ADMIN':
+      return true;
+    case 'CUSTOMER':
+      return String(order.customerId || '') === session.userId;
+    case 'RIDER':
+      // Riders see their own deliveries and the open dispatch pool.
+      return String(order.riderId || '') === session.userId || isUnassigned(order);
+    case 'RESTAURANT': {
+      if (String(order.restaurantId || '') === session.userId) return true;
+      if (String(order.restaurantId || '')) return false;
+      const profile = await RestaurantProfile.findOne({ restaurantId: session.userId })
+        .select('restaurantName')
+        .lean<{ restaurantName?: string }>();
+      const ownName = String(profile?.restaurantName || '').trim();
+      return Boolean(ownName) && String(order.restaurantName || '') === ownName;
+    }
+    default:
+      return false;
+  }
+}
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
@@ -30,6 +68,12 @@ export async function GET(
         { success: false, message: 'Order not found' },
         { status: 404 }
       );
+    }
+
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    if (!(await canAccessOrder(session, order))) {
+      return forbidden('You do not have access to this order');
     }
 
     return NextResponse.json({ success: true, order });
@@ -56,6 +100,36 @@ export async function PATCH(
         { success: false, message: 'Order ID required' },
         { status: 400 }
       );
+    }
+
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    const ownedOrder = await Order.findById(id)
+      .select('customerId restaurantId restaurantName riderId unassigned')
+      .lean<OrderOwnership>();
+    if (!ownedOrder) {
+      return NextResponse.json(
+        { success: false, message: 'Order not found' },
+        { status: 404 }
+      );
+    }
+    if (!(await canAccessOrder(session, ownedOrder))) {
+      return forbidden('You do not have access to this order');
+    }
+    if (body.riderId != null && session.role !== 'ADMIN') {
+      const requestedRider = String(body.riderId).trim();
+      const currentRider = String(ownedOrder.riderId || '');
+      // Riders may only claim an order for themselves or release their own order.
+      const riderAllowed =
+        session.role === 'RIDER' &&
+        (requestedRider === session.userId ||
+          (requestedRider === '' && currentRider === session.userId));
+      if (!riderAllowed) {
+        return forbidden('You cannot change the rider on this order');
+      }
+    }
+    if (session.role === 'RIDER' && isUnassigned(ownedOrder) && body.riderId == null) {
+      return forbidden('Accept the order before updating it');
     }
 
     const updateData: Record<string, unknown> = {};

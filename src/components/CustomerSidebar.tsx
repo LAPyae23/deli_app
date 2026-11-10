@@ -83,7 +83,8 @@ export default function CustomerSidebar() {
       <div className="p-3 border-t border-border space-y-1">
         <ThemeToggle collapsed={collapsed} showLabel />
         <Link
-          href="/"
+          href="/api/auth/logout"
+          prefetch={false}
           className={`nav-item ${collapsed ? 'justify-center px-0' : ''}`}
           title={collapsed ? 'Sign Out' : undefined}
         >

@@ -29,7 +29,7 @@ Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS, MongoDB with Mongoo
 
 ## Run locally
 
-Create a `.env` file with your own `MONGODB_URI`, then run:
+Create a `.env` file with your own `MONGODB_URI` and an `AUTH_SECRET` (any random string of 32+ characters, used to sign login sessions), then run:
 
 ```bash
 npm install

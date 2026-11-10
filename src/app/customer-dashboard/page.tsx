@@ -659,7 +659,7 @@ export default function CustomerDashboardPage() {
         <div className="p-3 border-t border-border space-y-1">
           <ThemeToggle collapsed={collapsed} showLabel />
           <a
-            href="/"
+            href="/api/auth/logout"
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium nav-item ${
               collapsed ? 'justify-center px-0' : ''
             }`}

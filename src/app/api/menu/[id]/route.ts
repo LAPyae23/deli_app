@@ -2,6 +2,20 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import MenuItem from '@/models/MenuItem';
+import { forbidden, getSession, unauthorized } from '@/lib/auth';
+
+/** Restaurants may only change their own menu items; admins may change any. */
+async function assertMenuOwner(request: Request, id: string) {
+  const session = getSession(request);
+  if (!session) return unauthorized();
+  if (session.role === 'ADMIN') return null;
+  const item = await MenuItem.findById(id).select('restaurantId').lean<{ restaurantId?: string }>();
+  if (!item) return NextResponse.json({ success: false, message: 'Item not found' }, { status: 404 });
+  if (session.role !== 'RESTAURANT' || String(item.restaurantId) !== session.userId) {
+    return forbidden('You can only modify your own menu items');
+  }
+  return null;
+}
 
 export async function PATCH(
   request: Request,
@@ -10,7 +24,10 @@ export async function PATCH(
   try {
     await dbConnect();
     const resolved = await Promise.resolve(params);
+    const denied = await assertMenuOwner(request, resolved.id);
+    if (denied) return denied;
     const body = await request.json();
+    delete body.restaurantId; // ownership cannot be transferred
 
     const update: Record<string, unknown> = {};
 
@@ -87,6 +104,8 @@ export async function DELETE(
   try {
     await dbConnect();
     const resolved = await Promise.resolve(params);
+    const denied = await assertMenuOwner(request, resolved.id);
+    if (denied) return denied;
     await MenuItem.findByIdAndDelete(resolved.id);
     return NextResponse.json({ success: true, message: 'Item deleted' });
   } catch (error) {

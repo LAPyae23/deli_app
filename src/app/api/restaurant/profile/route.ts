@@ -1,5 +1,6 @@
 // app/api/restaurant/profile/route.ts
 import { NextResponse } from 'next/server';
+import { forbidden, getSession, resolveOwnId } from '@/lib/auth';
 import dbConnect from '@/lib/mongodb';
 import RestaurantProfile from '@/models/RestaurantProfile';
 
@@ -31,6 +32,10 @@ export async function POST(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
+    // Non-admins may only act on their own account.
+    const ownId = resolveOwnId(getSession(request), body?.restaurantId, 'RESTAURANT');
+    if (!ownId) return forbidden('You can only modify your own data');
+    body.restaurantId = ownId;
     const restaurantId = body.restaurantId;
 
     if (!restaurantId) {
@@ -79,6 +84,10 @@ export async function PATCH(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
+    // Non-admins may only act on their own account.
+    const ownId = resolveOwnId(getSession(request), body?.restaurantId, 'RESTAURANT');
+    if (!ownId) return forbidden('You can only modify your own data');
+    body.restaurantId = ownId;
     const restaurantId = body.restaurantId;
     const storeStatus = body.storeStatus;
 

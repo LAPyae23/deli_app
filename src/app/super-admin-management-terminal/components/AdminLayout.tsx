@@ -162,7 +162,7 @@ function AdminProfileDropdown({
             Profile Settings
           </button>
           <a
-            href="/"
+            href="/api/auth/logout"
             role="menuitem"
             className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger/10"
           >
@@ -499,7 +499,7 @@ export default function AdminLayout() {
             {!collapsed && <span>Settings</span>}
           </button>
           <a
-            href="/"
+            href="/api/auth/logout"
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed ? 'justify-center px-0' : ''}`}
             title={collapsed ? 'Sign Out' : undefined}
           >

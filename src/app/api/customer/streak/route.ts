@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { forbidden, getSession, resolveOwnId } from '@/lib/auth';
 import dbConnect from '@/lib/mongodb';
 import CustomerProfile from '@/models/CustomerProfile';
 
@@ -31,6 +32,10 @@ export async function POST(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
+    // Non-admins may only act on their own account.
+    const ownId = resolveOwnId(getSession(request), body?.customerId, 'CUSTOMER');
+    if (!ownId) return forbidden('You can only modify your own data');
+    body.customerId = ownId;
     const customerId = String(body.customerId || '').trim();
 
     if (!customerId) {

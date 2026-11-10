@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
+import { getSession, unauthorized } from '@/lib/auth';
 
 export async function PATCH(
   request: Request,
@@ -28,8 +29,14 @@ export async function PATCH(
 
     await dbConnect();
 
-    const order = await Order.findByIdAndUpdate(
-      id,
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    // Customers can only review their own orders.
+    const filter: Record<string, unknown> = { _id: id };
+    if (session.role !== 'ADMIN') filter.customerId = session.userId;
+
+    const order = await Order.findOneAndUpdate(
+      filter,
       { rating, review },
       { new: true }
     );

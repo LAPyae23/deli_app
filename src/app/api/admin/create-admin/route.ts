@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
+import { getSession } from '@/lib/auth';
 
 const PASSWORD_REGEX =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
@@ -9,8 +10,8 @@ const PASSWORD_REGEX =
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    const adminSessionId = getSession(request)?.userId;
     const {
-      adminSessionId,
       firstName,
       lastName,
       email,

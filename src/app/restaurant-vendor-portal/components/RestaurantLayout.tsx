@@ -357,7 +357,7 @@ export default function RestaurantLayout() {
             {!collapsed && <span>Settings</span>}
           </button>
           <a
-            href="/"
+            href="/api/auth/logout"
             className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium nav-item ${
               collapsed ? 'justify-center px-0' : ''
             }`}
