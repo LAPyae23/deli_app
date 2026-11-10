@@ -369,8 +369,59 @@ function catalogByName(name: string) {
   return CATALOG.find((c) => c.name === name) || CATALOG[0];
 }
 
-/** ~55% association bundles, otherwise 1–3 random catalog items */
-function buildBasketItems(restaurantName: string) {
+/**
+ * Stable taste per customer so the For You recommender has real signal:
+ * a favourite category and three "staple" dishes (two from that category).
+ */
+type Taste = { staples: string[]; favoriteCategory: string; bundles: string[][] };
+const tasteCache = new Map<string, Taste>();
+function tasteFor(customerId: string): Taste {
+  const cached = tasteCache.get(customerId);
+  if (cached) return cached;
+  let h = 2166136261;
+  for (let i = 0; i < customerId.length; i++) h = Math.imul(h ^ customerId.charCodeAt(i), 16777619);
+  const rand = () => {
+    h = Math.imul(h ^ (h >>> 15), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+  const categories = [...new Set(CATALOG.map((c) => c.category))];
+  const favoriteCategory = categories[Math.floor(rand() * categories.length)];
+  const inFav = CATALOG.filter((c) => c.category === favoriteCategory).map((c) => c.name);
+  const staples: string[] = [];
+  while (staples.length < Math.min(2, inFav.length)) {
+    const n = inFav[Math.floor(rand() * inFav.length)];
+    if (!staples.includes(n)) staples.push(n);
+  }
+  while (staples.length < 3) {
+    const n = CATALOG[Math.floor(rand() * CATALOG.length)].name;
+    if (!staples.includes(n)) staples.push(n);
+  }
+  const bundles = ASSOCIATION_BUNDLES.filter((b) => b.some((n) => staples.includes(n)));
+  const taste = { staples, favoriteCategory, bundles };
+  tasteCache.set(customerId, taste);
+  return taste;
+}
+
+function tasteBasket(taste: Taste): string[] {
+  if (taste.bundles.length && Math.random() < 0.45) return [...pick(taste.bundles)];
+  const names = [pick(taste.staples)];
+  if (Math.random() < 0.4) {
+    const extra = pick(CATALOG.filter((c) => c.category === taste.favoriteCategory)).name;
+    if (!names.includes(extra)) names.push(extra);
+  }
+  return names;
+}
+
+/**
+ * ~65% of a customer's orders follow their taste (staples / their bundles);
+ * the rest keep the original mix: ~55% association bundles, otherwise 1–3
+ * random catalog items.
+ */
+function buildBasketItems(restaurantName: string, customerId?: string) {
+  if (customerId && Math.random() < 0.65) {
+    return basketToItems(tasteBasket(tasteFor(customerId)), restaurantName);
+  }
   const useBundle = Math.random() < 0.55;
   const names = useBundle
     ? [...pick(ASSOCIATION_BUNDLES)]
@@ -385,6 +436,10 @@ function buildBasketItems(restaurantName: string) {
     if (!names.includes(extra)) names.push(extra);
   }
 
+  return basketToItems(names, restaurantName);
+}
+
+function basketToItems(names: string[], restaurantName: string) {
   return names.map((name) => {
     const base = catalogByName(name);
     const quantity = faker.number.int({ min: 1, max: 3 });
@@ -701,7 +756,7 @@ async function seedBulkOrders() {
         const isCancelled = status === 'CANCELLED' || status === 'REJECTED';
         const assignedRider = status === 'REJECTED' && Math.random() < 0.4 ? null : rider;
 
-        const items = buildBasketItems(restaurant.restaurantName || 'Restaurant');
+        const items = buildBasketItems(restaurant.restaurantName || 'Restaurant', customer.customerId);
         if (items.length >= 2) {
           const names = new Set(items.map((i) => i.name));
           if (

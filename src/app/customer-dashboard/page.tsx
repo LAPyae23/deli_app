@@ -15,6 +15,7 @@ import OrderConfirmationScreen from './components/OrderConfirmationScreen';
 import AddressPickerModal, { type PickedAddress } from './components/AddressPickerModal';
 import CustomerProfile from './components/CustomerProfile';
 import AIRecommendations, { type AiLane } from './components/AIRecommendations';
+import ForYou from './components/ForYou';
 import { useRouter } from 'next/navigation';
 import type { CartItem, DeliveryAddressInfo, OrderTotals, Restaurant } from './types';
 
@@ -195,6 +196,7 @@ function CustomerTabContent({
             compactEntry
             onOpenLane={onOpenAiPicks}
           />
+          <ForYou onSelectRestaurant={onSelectRestaurant} />
           <RestaurantGrid
             onSelectRestaurant={onSelectRestaurant}
             deliveryAddress={deliveryAddress}
