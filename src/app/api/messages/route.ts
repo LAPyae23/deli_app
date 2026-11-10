@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import Message from '@/models/Message';
 import { SUPPORT_ADMIN_ID, SUPPORT_ADMIN_ROLE } from '@/lib/support';
+import { forbidden, getSession, unauthorized, type Session } from '@/lib/auth';
+
+/** IDs the signed-in user may read or send messages as. */
+function ownMessageIds(session: Session) {
+  return session.role === 'ADMIN' ? [session.userId, SUPPORT_ADMIN_ID] : [session.userId];
+}
 
 const SUPPORT_BOT_TEXT =
   'Hello! FoodDash Support Bot here. We have received your message. A human agent will assist you shortly.';
@@ -19,6 +25,13 @@ export async function GET(request: Request) {
         { success: false, message: 'senderId and receiverId are required' },
         { status: 400 }
       );
+    }
+
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    const ownIds = ownMessageIds(session);
+    if (!ownIds.includes(senderId) && !ownIds.includes(receiverId)) {
+      return forbidden('You can only read your own conversations');
     }
 
     const query: Record<string, unknown> = {
@@ -51,8 +64,13 @@ export async function POST(request: Request) {
     await dbConnect();
     const body = await request.json();
 
-    const senderId = String(body.senderId || '').trim();
-    const senderRole = String(body.senderRole || '').trim();
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    const requestedSender = String(body.senderId || '').trim();
+    const ownIds = ownMessageIds(session);
+    // Messages are always sent as the signed-in user (admins may also use the support inbox).
+    const senderId = ownIds.includes(requestedSender) ? requestedSender : session.userId;
+    const senderRole = session.role;
     const receiverId = String(body.receiverId || '').trim();
     const receiverRole = String(body.receiverRole || '').trim();
     const text = String(body.text || '').trim();

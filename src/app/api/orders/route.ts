@@ -4,6 +4,7 @@ import Order from '@/models/Order';
 import MenuItem from '@/models/MenuItem';
 import RestaurantProfile from '@/models/RestaurantProfile';
 import CustomerProfile from '@/models/CustomerProfile';
+import { forbidden, getSession, unauthorized } from '@/lib/auth';
 import {
   calculateOrderPricing,
   subtotalFromItems,
@@ -33,6 +34,37 @@ export async function GET(request: Request) {
     if (riderId) query.riderId = riderId;
     if (orderNumber) query.orderNumber = orderNumber;
 
+    // Scope results to the signed-in user (admins see everything).
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    const isDispatchPool = unassigned === 'true' || unassigned === '1';
+    if (session.role === 'CUSTOMER') {
+      delete query.restaurantId;
+      delete query.restaurantName;
+      delete query.riderId;
+      query.customerId = session.userId;
+    } else if (session.role === 'RESTAURANT') {
+      delete query.restaurantId;
+      delete query.restaurantName;
+      delete query.customerId;
+      delete query.riderId;
+      // Older orders may only carry the restaurant name.
+      const profile = await RestaurantProfile.findOne({ restaurantId: session.userId })
+        .select('restaurantName')
+        .lean<{ restaurantName?: string }>();
+      const ownName = String(profile?.restaurantName || '').trim();
+      query.$or = ownName
+        ? [{ restaurantId: session.userId }, { restaurantName: ownName }]
+        : [{ restaurantId: session.userId }];
+    } else if (session.role === 'RIDER') {
+      const forRider = searchParams.get('forRiderId')?.trim();
+      if (forRider && forRider !== session.userId) {
+        return forbidden('You can only access your own data');
+      }
+      delete query.customerId;
+      if (!isDispatchPool) query.riderId = session.userId;
+    }
+
     if (status) {
       const statuses = status
         .split(',')
@@ -45,15 +77,24 @@ export async function GET(request: Request) {
       }
     }
 
-    if (unassigned === 'true' || unassigned === '1') {
+    if (isDispatchPool) {
       // Seed / older docs may omit `unassigned` even when no rider is assigned.
-      query.$or = [
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }];
+        delete query.$or;
+      }
+      const unassignedOr = [
         { unassigned: true },
         {
           unassigned: { $exists: false },
           $or: [{ riderId: { $exists: false } }, { riderId: null }, { riderId: '' }],
         },
       ];
+      if (query.$and) {
+        (query.$and as unknown[]).push({ $or: unassignedOr });
+      } else {
+        query.$or = unassignedOr;
+      }
     }
 
     // Offline or blocked riders must not receive dispatch candidates
@@ -97,7 +138,15 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await dbConnect();
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    if (session.role !== 'CUSTOMER') {
+      return forbidden('Only customer accounts can place orders');
+    }
+
     const body = await request.json();
+    // Orders are always placed for the signed-in customer.
+    body.customerId = session.userId;
 
     if (!body?.items?.length || !body?.deliveryAddress?.address) {
       return NextResponse.json(

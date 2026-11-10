@@ -2,18 +2,24 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
 import bcrypt from 'bcryptjs';
+import { getSession, unauthorized } from '@/lib/auth';
 
 const PASSWORD_REGEX =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { userId, oldPassword, newPassword } = body;
+    const session = getSession(request);
+    if (!session) return unauthorized();
+    // Always change the signed-in user's own password; ignore any userId in the body.
+    const userId = session.userId;
 
-    if (!userId || !oldPassword || !newPassword) {
+    const body = await request.json();
+    const { oldPassword, newPassword } = body;
+
+    if (!oldPassword || !newPassword) {
       return NextResponse.json(
-        { success: false, message: 'userId, oldPassword, and newPassword are required' },
+        { success: false, message: 'oldPassword and newPassword are required' },
         { status: 400 }
       );
     }

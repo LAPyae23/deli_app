@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
 import bcrypt from 'bcryptjs';
+import { SESSION_COOKIE, createSessionToken, sessionCookieOptions, type Role } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
@@ -27,7 +28,9 @@ export async function POST(request: Request) {
 
     await dbConnect();
 
-    const user = await User.findOne({ email });
+    // Older accounts may have been stored with mixed-case emails.
+    const rawEmail = String(email).trim();
+    const user = await User.findOne({ email: { $in: [rawEmail, rawEmail.toLowerCase()] } });
 
     if (!user || user.role !== role) {
       return NextResponse.json(
@@ -44,7 +47,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       userId: user._id,
       user: {
@@ -53,6 +56,12 @@ export async function POST(request: Request) {
         role: user.role,
       },
     });
+    const token = await createSessionToken({
+      userId: String(user._id),
+      role: user.role as Role,
+    });
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    return response;
   } catch (error) {
     console.error('Login error:', error);
     return NextResponse.json(

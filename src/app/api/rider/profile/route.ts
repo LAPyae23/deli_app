@@ -1,5 +1,6 @@
 // app/api/rider/profile/route.ts
 import { NextResponse } from 'next/server';
+import { forbidden, getSession, resolveOwnId } from '@/lib/auth';
 import dbConnect from '@/lib/mongodb';
 import RiderProfile from '@/models/RiderProfile';
 
@@ -31,6 +32,10 @@ export async function POST(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
+    // Non-admins may only act on their own account.
+    const ownId = resolveOwnId(getSession(request), body?.riderId, 'RIDER');
+    if (!ownId) return forbidden('You can only modify your own data');
+    body.riderId = ownId;
     const riderId = body.riderId;
 
     if (!riderId) {

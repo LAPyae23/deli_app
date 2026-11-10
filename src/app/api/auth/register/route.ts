@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
 import bcrypt from 'bcryptjs';
+import { SESSION_COOKIE, createSessionToken, sessionCookieOptions, type Role } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { firstName, lastName, email, phone, password, role } = body;
+    const { firstName, lastName, phone, password, role } = body;
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
 
     if (!firstName || !lastName || !email || !phone || !password || !role) {
       return NextResponse.json(
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
       displayId,
     });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       userId: newUser._id,
       user: {
@@ -86,6 +88,12 @@ export async function POST(request: Request) {
         name: `${firstName} ${lastName}`.trim(),
       },
     });
+    const token = await createSessionToken({
+      userId: String(newUser._id),
+      role: role as Role,
+    });
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    return response;
   } catch (error) {
     console.error('Registration error:', error);
     return NextResponse.json(
