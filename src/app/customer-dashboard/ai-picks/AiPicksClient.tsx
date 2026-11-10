@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
   CloudRain,
+  CloudSun,
   Flame,
   Loader2,
   Sparkles,
@@ -25,7 +26,8 @@ export default function AiPicksClient() {
   const searchParams = useSearchParams();
   const [ready, setReady] = useState(false);
   const [lane, setLane] = useState<AiLane>('recommended');
-  const [weather, setWeather] = useState<'Rainy' | 'Sunny'>('Rainy');
+  // 'Now' = real Yangon weather from the server; Rainy/Sunny = explore another weather.
+  const [weather, setWeather] = useState<'Now' | 'Rainy' | 'Sunny'>('Now');
 
   useEffect(() => {
     const role = localStorage.getItem('fooddash_session_role');
@@ -67,6 +69,16 @@ export default function AiPicksClient() {
             </p>
           </div>
           <div className="flex shrink-0 rounded-full border border-border bg-muted/40 p-0.5">
+            <button
+              type="button"
+              onClick={() => setWeather('Now')}
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                weather === 'Now' ? 'bg-customer text-white' : 'text-muted-foreground'
+              }`}
+            >
+              <CloudSun className="h-3 w-3" />
+              Now
+            </button>
             <button
               type="button"
               onClick={() => setWeather('Rainy')}
@@ -127,7 +139,7 @@ export default function AiPicksClient() {
         </section>
 
         <FoodieWrapped />
-        <AIRecommendations initialLane={lane} weather={weather} />
+        <AIRecommendations initialLane={lane} weather={weather === 'Now' ? undefined : weather} />
       </main>
     </div>
   );

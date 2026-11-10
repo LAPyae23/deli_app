@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getYangonWeather, isWet } from '@/lib/weather';
 import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
 import { cacheGetOrSet } from '@/lib/ttlCache';
@@ -14,7 +15,6 @@ const DAY_NAMES = [
 ] as const;
 
 type DayAgg = { _id?: number; sum?: number; count?: number };
-type RainyAgg = { _id?: string; quantitySold?: number };
 type WeatherAgg = { _id?: string; count?: number };
 
 export async function GET(request: Request) {
@@ -47,25 +47,37 @@ export async function GET(request: Request) {
                   { $match: { prepTime: { $gt: 0 } } },
                   {
                     $group: {
-                      _id: { $dayOfWeek: '$createdAt' },
+                      _id: { $dayOfWeek: { date: '$createdAt', timezone: 'Asia/Yangon' } },
                       sum: { $sum: '$prepTime' },
                       count: { $sum: 1 },
                     },
                   },
                 ],
-                rainyItems: [
-                  { $match: { weather: 'Rainy' } },
+                // Quantity per dish per Yangon day, split by real wet / dry weather.
+                dayDishes: [
+                  { $match: { weather: { $in: ['Sunny', 'Cloudy', 'Rainy', 'Stormy'] }, status: { $nin: ['CANCELLED', 'REJECTED'] } } },
                   { $unwind: { path: '$items', preserveNullAndEmptyArrays: false } },
                   {
                     $group: {
-                      _id: { $ifNull: ['$items.name', 'Item'] },
-                      quantitySold: {
-                        $sum: { $ifNull: ['$items.quantity', 1] },
+                      _id: {
+                        wet: { $in: ['$weather', ['Rainy', 'Stormy']] },
+                        dish: { $ifNull: ['$items.name', 'Item'] },
+                      },
+                      qty: { $sum: { $ifNull: ['$items.quantity', 1] } },
+                    },
+                  },
+                ],
+                classDays: [
+                  { $match: { weather: { $in: ['Sunny', 'Cloudy', 'Rainy', 'Stormy'] }, status: { $nin: ['CANCELLED', 'REJECTED'] } } },
+                  {
+                    $group: {
+                      _id: {
+                        wet: { $in: ['$weather', ['Rainy', 'Stormy']] },
+                        day: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Yangon' } },
                       },
                     },
                   },
-                  { $sort: { quantitySold: -1 } },
-                  { $limit: 5 },
+                  { $group: { _id: '$_id.wet', days: { $sum: 1 } } },
                 ],
                 weatherCounts: [
                   {
@@ -83,7 +95,8 @@ export async function GET(request: Request) {
         );
 
         const byDay = (facet?.byDay || []) as DayAgg[];
-        const rainyItems = (facet?.rainyItems || []) as RainyAgg[];
+        const dayDishes = (facet?.dayDishes || []) as Array<{ _id: { wet: boolean; dish: string }; qty: number }>;
+        const classDays = (facet?.classDays || []) as Array<{ _id: boolean; days: number }>;
         const weatherRows = (facet?.weatherCounts || []) as WeatherAgg[];
         const orderCount = Number(facet?.total?.[0]?.count) || 0;
 
@@ -126,27 +139,54 @@ export async function GET(request: Request) {
 
         const bottleneckAlert = bottleneckDay
           ? prepIncreaseMins > 0
-            ? `⚠️ Your prep time increases by ${prepIncreaseMins} mins on ${bottleneckDay.day} evenings. Riders are waiting. Consider adding kitchen staff.`
+            ? `⚠️ Your prep time increases by ${prepIncreaseMins} mins on ${bottleneckDay.day}s. Riders are waiting. Consider adding kitchen staff.`
             : `⚠️ ${bottleneckDay.day} is your busiest kitchen day (avg ${bottleneckDay.avgPrepMins} mins prep). Keep staffing ready so riders aren't waiting.`
           : '⚠️ Not enough prep-time history yet. Complete more orders to unlock bottleneck insights.';
 
-        const rainyTopItems = rainyItems.map((row) => ({
-          name: String(row._id || 'Item'),
-          quantitySold: Number(row.quantitySold) || 0,
-        }));
-        const topRainyItem = rainyTopItems[0] || null;
-        const suggestedPrepQty = topRainyItem
-          ? Math.max(30, Math.ceil(topRainyItem.quantitySold * 0.35))
-          : 30;
+        // Tomorrow's real forecast (Open-Meteo) decides which history applies.
+        const live = await getYangonWeather();
+        const rainChance = live.tomorrow.rainChancePct;
+        const wetTomorrow = isWet(live.tomorrow.kind) || (rainChance != null && rainChance >= 60);
+
+        const daysOf = (wet: boolean) => classDays.find((d) => d._id === wet)?.days || 0;
+        const perDay = (wet: boolean) => {
+          const days = daysOf(wet);
+          const m = new Map<string, number>();
+          for (const r of dayDishes) {
+            if (r._id.wet !== wet || !days) continue;
+            m.set(String(r._id.dish), (m.get(String(r._id.dish)) || 0) + (Number(r.qty) || 0) / days);
+          }
+          return m;
+        };
+        const target = perDay(wetTomorrow);
+        const other = perDay(!wetTomorrow);
+        const targetDays = daysOf(wetTomorrow);
+        const topItems = [...target.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([name, avg]) => ({
+            name,
+            avgPerDay: Math.round(avg * 10) / 10,
+            vsOtherWeatherPct: other.get(name) ? Math.round((avg / other.get(name)! - 1) * 100) : null,
+          }));
+        const top = topItems[0] || null;
+        // Prep the typical day's amount plus a 10% buffer.
+        const suggestedPrepQty = top ? Math.max(1, Math.ceil(top.avgPerDay * 1.1)) : 0;
 
         const weatherTotals: Record<string, number> = {};
         for (const row of weatherRows) {
-          weatherTotals[String(row._id || 'Sunny')] = Number(row.count) || 0;
+          weatherTotals[String(row._id || 'Unknown')] = Number(row.count) || 0;
         }
 
-        const forecastAlert = topRainyItem
-          ? `🌧️ Rainy day expected tomorrow. Prepare ${suggestedPrepQty}+ bowls of ${topRainyItem.name} based on past data.`
-          : '🌧️ Rainy-weather forecast ready once you have Rainy-day sales history. Seed or complete more orders to unlock this alert.';
+        const chanceText = rainChance != null ? `${rainChance}% rain chance` : 'seasonal estimate';
+        const vsText = top?.vsOtherWeatherPct != null && Math.abs(top.vsOtherWeatherPct) >= 10
+          ? ` (${top.vsOtherWeatherPct > 0 ? '+' : ''}${top.vsOtherWeatherPct}% vs ${wetTomorrow ? 'dry' : 'rainy'} days)`
+          : '';
+        const forecastAlert = !top || targetDays < 3
+          ? `${wetTomorrow ? '🌧️ Rain likely' : '☀️ Dry weather'} tomorrow (${chanceText}). Not enough ${wetTomorrow ? 'rainy' : 'dry'}-day sales history yet to suggest prep amounts.`
+          : wetTomorrow
+            ? `🌧️ Rain likely tomorrow (${chanceText}). On rainy days you sell about ${top.avgPerDay} ${top.name} a day${vsText}. Prepare ${suggestedPrepQty}.`
+            : `☀️ Tomorrow looks dry (${chanceText}). On dry days your top seller is ${top.name}, about ${top.avgPerDay} a day${vsText}. Prepare ${suggestedPrepQty}.`;
 
         return {
           success: true,
@@ -160,11 +200,16 @@ export async function GET(request: Request) {
               alert: bottleneckAlert,
             },
             forecast: {
-              weather: 'Rainy',
-              topItem: topRainyItem?.name || null,
-              quantitySold: topRainyItem?.quantitySold || 0,
+              weather: live.tomorrow.kind,
+              wetTomorrow,
+              rainChancePct: rainChance,
+              date: live.tomorrow.date,
+              source: live.source,
+              topItem: top?.name || null,
+              avgPerDay: top?.avgPerDay ?? 0,
+              historyDays: targetDays,
               suggestedPrepQty,
-              rainyTopItems,
+              topItems,
               weatherOrderCounts: weatherTotals,
               alert: forecastAlert,
             },

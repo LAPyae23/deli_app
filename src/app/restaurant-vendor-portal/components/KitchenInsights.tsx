@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   CloudRain,
+  Sun,
   TriangleAlert,
   Loader2,
   Sparkles,
@@ -19,8 +20,13 @@ type InsightsPayload = {
     alert?: string;
   };
   forecast?: {
+    weather?: string;
+    wetTomorrow?: boolean;
+    rainChancePct?: number | null;
+    source?: string;
     topItem?: string | null;
-    quantitySold?: number;
+    avgPerDay?: number;
+    historyDays?: number;
     suggestedPrepQty?: number;
     alert?: string;
   };
@@ -78,12 +84,12 @@ export default function KitchenInsights() {
     };
   }, []);
 
-  const forecastAlert =
-    insights?.forecast?.alert ||
-    '🌧️ Rainy day expected tomorrow. Prepare 30+ bowls of Mohinga based on past data.';
+  const forecastAlert = insights?.forecast?.alert || 'Forecast not available yet.';
+  const wetTomorrow = Boolean(insights?.forecast?.wetTomorrow);
+  const ForecastIcon = wetTomorrow ? CloudRain : Sun;
   const bottleneckAlert =
     insights?.bottleneck?.alert ||
-    '⚠️ Your prep time increases by 15 mins on Friday evenings. Riders are waiting. Consider adding kitchen staff.';
+    'Not enough prep-time history yet.';
 
   return (
     <section className="mt-6">
@@ -111,11 +117,14 @@ export default function KitchenInsights() {
               <div className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
               <div className="relative flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25">
-                  <CloudRain className="h-5 w-5 text-white" />
+                  <ForecastIcon className="h-5 w-5 text-white" />
                 </span>
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/70">
-                    Weather Forecast Alert
+                    Tomorrow&apos;s weather
+                    {insights?.forecast?.rainChancePct != null
+                      ? ` · ${insights.forecast.rainChancePct}% rain`
+                      : ''}
                   </p>
                   <h3 className="text-base font-bold text-white">Demand Forecast</h3>
                 </div>
@@ -129,10 +138,10 @@ export default function KitchenInsights() {
                 <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-3.5 py-3">
                   <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700/80">
                     <Utensils className="h-3.5 w-3.5" />
-                    Top rainy seller
+                    {wetTomorrow ? 'Top rainy-day seller' : 'Top dry-day seller'}
                   </div>
                   <p className="truncate text-sm font-bold text-slate-900">
-                    {insights?.forecast?.topItem || 'Mohinga'}
+                    {insights?.forecast?.topItem || '—'}
                   </p>
                 </div>
                 <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-3.5 py-3">
@@ -140,18 +149,20 @@ export default function KitchenInsights() {
                     Prep suggestion
                   </div>
                   <p className="text-sm font-bold text-slate-900 font-tabular">
-                    {insights?.forecast?.suggestedPrepQty ?? 30}+ portions
+                    {insights?.forecast?.suggestedPrepQty
+                      ? `${insights.forecast.suggestedPrepQty} portions`
+                      : '—'}
                   </p>
                 </div>
               </div>
 
-              {insights?.forecast?.quantitySold != null &&
-                insights.forecast.quantitySold > 0 && (
-                  <p className="text-[11px] text-slate-500">
-                    Based on {insights.forecast.quantitySold} units sold on Rainy days
-                    historically.
-                  </p>
-                )}
+              {Boolean(insights?.forecast?.historyDays) && Boolean(insights?.forecast?.topItem) && (
+                <p className="text-[11px] text-slate-500">
+                  Average of {insights?.forecast?.avgPerDay} a day over {insights?.forecast?.historyDays}{' '}
+                  {wetTomorrow ? 'rainy' : 'dry'} days, plus a 10% buffer. Forecast:{' '}
+                  {insights?.forecast?.source === 'open-meteo' ? 'Open-Meteo' : 'seasonal estimate'}.
+                </p>
+              )}
             </div>
           </article>
 

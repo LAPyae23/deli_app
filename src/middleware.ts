@@ -19,6 +19,8 @@ type Rule = {
 
 // First matching rule wins, so list more specific prefixes first.
 const API_RULES: Rule[] = [
+  // Vercel Cron jobs (each route checks CRON_SECRET when it is set).
+  { prefix: '/api/cron/', methods: ['GET'], access: 'public' },
   { prefix: '/api/auth/login', access: 'public' },
   { prefix: '/api/auth/register', access: 'public' },
   { prefix: '/api/auth/logout', access: 'public' },

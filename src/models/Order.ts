@@ -65,6 +65,8 @@ const OrderSchema = new mongoose.Schema(
       enum: ['Sunny', 'Rainy', 'Cloudy', 'Stormy'],
       default: 'Sunny',
     },
+    /** 'open-meteo' once `weather` holds the real Yangon weather for the order's hour. */
+    weatherSource: { type: String },
     vehicleType: {
       type: String,
       enum: ['Motorcycle', 'Bicycle', 'Car'],

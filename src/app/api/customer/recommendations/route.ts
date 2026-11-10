@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import RestaurantProfile from '@/models/RestaurantProfile';
+import Order from '@/models/Order';
+import { getSession } from '@/lib/auth';
+import { getYangonWeather, isWet } from '@/lib/weather';
+import { getDishWeatherLift, getTrending, significantDishes } from '@/lib/weatherDemand';
 import { AI_PICKS_FALLBACK_ITEMS, getDishImage } from '@/lib/dishImages';
 import {
   favoriteFromOrderHistory,
@@ -85,9 +89,14 @@ export async function GET(request: Request) {
     await dbConnect();
 
     const { searchParams } = new URL(request.url);
-    const customerId = searchParams.get('customerId')?.trim() || 'demo-customer';
-    const weather = pickWeather(searchParams.get('weather'));
+    const customerId =
+      searchParams.get('customerId')?.trim() || getSession(request)?.userId || 'demo-customer';
+    // A weather in the URL = the customer exploring another weather; otherwise real Yangon weather.
+    const live = await getYangonWeather();
+    const requestedWeather = searchParams.get('weather');
+    const weather = requestedWeather ? pickWeather(requestedWeather) : live.now.kind;
     const weatherMeta = weatherCopy(weather);
+    const wet = isWet(weather);
 
     const [restaurantDocs, history] = await Promise.all([
       RestaurantProfile.find({}).select('restaurantId restaurantName').lean(),
@@ -102,11 +111,49 @@ export async function GET(request: Request) {
 
     const sampled = await sampleDistinctPicks(weather);
 
+    // Weather picks: dishes that really sell more in this weather (from orders
+    // with recorded real weather). Falls back to the soup/drinks rule when the
+    // data has no clear signal yet.
+    const liftData = await getDishWeatherLift();
+    const signal = significantDishes(liftData, wet).slice(0, 6);
+    let weatherReason = weatherMeta.subtitle;
+    let weatherDocs: SampledMenu[] = [];
+    if (signal.length >= 3) {
+      for (const d of signal) {
+        const [doc] = await sampleMenuItems({ name: d.dish }, 1);
+        if (doc) weatherDocs.push(doc);
+      }
+      const top = signal[0];
+      const pct = Math.round(((wet ? top.lift : 1 / top.lift) - 1) * 100);
+      weatherReason = `${top.dish} is ordered ${pct}% more on ${wet ? 'rainy' : 'dry'} days`;
+    }
+    if (weatherDocs.length < 3) weatherDocs = sampled.weatherList;
     const weatherBased = distinctByIdOrName(
-      sampled.weatherList.map((d) => toRec(d, restaurants, { reasonTag: weather }))
+      weatherDocs.map((d) => toRec(d, restaurants, { reasonTag: weather }))
     );
+
+    // Trending: most-ordered dishes this week in the customer's township.
+    const lastOrder = customerId && customerId !== 'demo-customer'
+      ? await Order.findOne({ customerId })
+          .sort({ createdAt: -1 })
+          .select('deliveryAddress.township totals.township')
+          .lean<{ deliveryAddress?: { township?: string }; totals?: { township?: string } }>()
+      : null;
+    const township = String(lastOrder?.deliveryAddress?.township || lastOrder?.totals?.township || '').trim() || null;
+    const trend = await getTrending(township);
+    const trendDocs: SampledMenu[] = [];
+    for (const t of trend.dishes.slice(0, 6)) {
+      const [doc] = await sampleMenuItems({ name: t.dish }, 1);
+      if (doc) trendDocs.push(doc);
+    }
+    const trendingTitle = `Trending in ${trend.area}`;
+    const trendingReason = trend.dishes[0]
+      ? `${trend.dishes[0].orders} orders of ${trend.dishes[0].dish} in the last ${trend.days} days`
+      : 'Popular right now';
     const trending = distinctByIdOrName(
-      sampled.trendingList.map((d) => toRec(d, restaurants, { reasonTag: 'hlaing' }))
+      (trendDocs.length ? trendDocs : sampled.trendingList).map((d) =>
+        toRec(d, restaurants, { reasonTag: 'trending' })
+      )
     );
 
     const usedIds = [
@@ -155,12 +202,9 @@ export async function GET(request: Request) {
         ? personalized
         : fallbackItems(history.favoriteCategory || 'spicy', restaurants);
 
-    const weatherFeatured = sampled.weatherItem
-      ? toRec(sampled.weatherItem, restaurants, { reasonTag: weather })
-      : weatherItems[0] || null;
-    const trendingFeatured = sampled.trendingItem
-      ? toRec(sampled.trendingItem, restaurants, { reasonTag: 'hlaing' })
-      : trendingItems.find((i) => i.id !== weatherFeatured?.id) || trendingItems[0] || null;
+    const weatherFeatured = weatherItems[0] || null;
+    const trendingFeatured =
+      trendingItems.find((i) => i.id !== weatherFeatured?.id) || trendingItems[0] || null;
     const recommendedFeatured =
       recommendedItems.find(
         (i) => i.id !== weatherFeatured?.id && i.id !== trendingFeatured?.id
@@ -176,18 +220,24 @@ export async function GET(request: Request) {
       success: true,
       customerId,
       weather,
+      liveWeather: {
+        source: live.source,
+        kind: live.now.kind,
+        temperatureC: live.now.temperatureC,
+        explored: Boolean(requestedWeather),
+      },
       favoriteCategory,
       hasOrderHistory: history.hasOrderHistory,
       featured: {
         weather: {
           title: weatherMeta.title,
-          reason: weatherMeta.subtitle,
+          reason: weatherReason,
           weather,
           item: weatherFeatured,
         },
         trending: {
-          title: 'Trending in Hlaing',
-          reason: 'Popular Fast Food right now',
+          title: trendingTitle,
+          reason: trendingReason,
           item: trendingFeatured,
         },
         recommended: {
@@ -203,13 +253,13 @@ export async function GET(request: Request) {
       },
       weatherBased: {
         label: `Perfect for a ${weather} day`,
-        reason: weatherMeta.subtitle,
+        reason: weatherReason,
         weather,
         items: weatherItems.slice(0, 6),
       },
       trending: {
-        label: 'Trending in Hlaing',
-        reason: 'Popular Fast Food right now',
+        label: trendingTitle,
+        reason: trendingReason,
         items: trendingItems.slice(0, 6),
       },
     });

@@ -38,6 +38,7 @@ type HeatmapResponse = {
   success: boolean;
   hotspots?: Hotspot[];
   insight?: string;
+  weather?: { kind?: string; temperatureC?: number | null; source?: string };
   message?: string;
   imbalanceThreshold?: number;
 };
@@ -86,11 +87,12 @@ function scoreStyles(spot: Hotspot) {
 export default function PredictiveHeatmap() {
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [insight, setInsight] = useState(
-    '💡 AI Alert: Severe rider shortage zones light up in red — ride there for surge pay.'
+    'Loading demand radar…'
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState(2);
+  const [weather, setWeather] = useState<HeatmapResponse['weather'] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +109,7 @@ export default function PredictiveHeatmap() {
         if (!cancelled) {
           setHotspots(Array.isArray(data.hotspots) ? data.hotspots : []);
           if (data.insight) setInsight(data.insight);
+          if (data.weather) setWeather(data.weather);
           if (data.imbalanceThreshold) setThreshold(data.imbalanceThreshold);
         }
       } catch (err) {
@@ -161,6 +164,13 @@ export default function PredictiveHeatmap() {
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
           <p className="text-xs font-medium leading-relaxed text-rose-900/90">{insight}</p>
         </div>
+        {weather?.kind && (
+          <p className="text-[11px] text-slate-500">
+            Yangon now: <span className="font-semibold text-slate-700">{weather.kind}</span>
+            {weather.temperatureC != null ? ` · ${Math.round(weather.temperatureC)}°C` : ''}
+            {weather.source === 'open-meteo' ? ' · Open-Meteo' : ' · seasonal estimate'}
+          </p>
+        )}
 
         {imbalanceZones.length > 0 && (
           <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-600/5 px-3 py-2 text-[11px] font-semibold text-red-700">

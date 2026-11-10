@@ -103,19 +103,19 @@ function demoPayload(weatherLabel = 'Rainy'): RecommendationsPayload {
         item: weatherItems[0] || null,
       },
       trending: {
-        title: 'Trending in Hlaing',
-        reason: 'Ordered 50+ times today',
+        title: 'Trending near you',
+        reason: 'Popular right now',
         item: trending[0] || null,
       },
       recommended: {
         title: 'Recommended for You',
-        reason: 'Because you ordered Spicy Food recently',
+        reason: 'Picked from the menu for you',
         item: recommended[0] || null,
       },
     },
     personalized: {
       label: 'Based on your past orders',
-      reason: 'Because you ordered Spicy Food recently',
+      reason: 'Picked from the menu for you',
       items: recommended,
     },
     weatherBased: {
@@ -125,8 +125,8 @@ function demoPayload(weatherLabel = 'Rainy'): RecommendationsPayload {
       items: weatherItems,
     },
     trending: {
-      label: 'Trending in Hlaing',
-      reason: 'Ordered 50+ times today',
+      label: 'Trending near you',
+      reason: 'Popular right now',
       items: trending,
     },
   };
@@ -296,7 +296,7 @@ export default function AIRecommendations({
         accent: 'bg-primary text-white',
         activeClass: 'bg-primary text-white shadow-md shadow-primary/25',
         items: data.personalized?.items || [],
-        reason: data.personalized?.reason || 'Because you ordered Spicy Food recently',
+        reason: data.personalized?.reason || 'Picked from the menu for you',
       },
       {
         key: 'weather',
@@ -314,13 +314,13 @@ export default function AIRecommendations({
       },
       {
         key: 'trending',
-        title: 'Trending in Hlaing',
+        title: data.trending?.label || 'Trending near you',
         short: 'Trending',
         icon: <Flame className="h-4 w-4" />,
         accent: 'bg-orange-500 text-white',
         activeClass: 'bg-orange-500 text-white shadow-md shadow-orange-500/25',
         items: data.trending?.items || [],
-        reason: data.trending?.reason || 'Ordered 50+ times today',
+        reason: data.trending?.reason || 'Popular right now',
       },
     ];
   }, [data, weatherData]);
@@ -361,8 +361,8 @@ export default function AIRecommendations({
             onClick={() => onOpenLane?.('weather')}
           />
           <FeaturedCard
-            title="Trending in Hlaing"
-            reason={featured?.trending?.reason || 'Ordered 50+ times today'}
+            title={featured?.trending?.title || 'Trending near you'}
+            reason={featured?.trending?.reason || 'Popular right now'}
             item={trendingPick}
             accent="bg-orange-500"
             icon={<Flame className="h-3 w-3" />}
@@ -371,7 +371,7 @@ export default function AIRecommendations({
           <FeaturedCard
             title="Recommended for You"
             reason={
-              featured?.recommended?.reason || 'Because you ordered Spicy Food recently'
+              featured?.recommended?.reason || 'Picked from the menu for you'
             }
             item={recommendedPick}
             accent="bg-customer"

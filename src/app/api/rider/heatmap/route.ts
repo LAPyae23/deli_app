@@ -4,6 +4,8 @@ import Order from '@/models/Order';
 import RiderProfile from '@/models/RiderProfile';
 import SystemConfig from '@/models/SystemConfig';
 import { cacheGetOrSet } from '@/lib/ttlCache';
+import { getYangonWeather, isWet } from '@/lib/weather';
+import { getRainDemand } from '@/lib/weatherDemand';
 
 type HotspotStatus = 'Very High' | 'High' | 'Moderate' | 'Low';
 
@@ -271,11 +273,30 @@ async function buildHeatmap() {
       insight = `🚨 High demand in ${topImbalance.locationName} — ${topImbalance.activeOrders} live orders vs ${topImbalance.availableRiders} riders (${topImbalance.demandRatio}×). Head there for ${topImbalance.surgeMultiplier.toFixed(1)}× surge earnings!`;
     }
 
+    // Real weather now + how much busier wet hours have been (orders per active hour).
+    const [live, rain] = await Promise.all([getYangonWeather(), getRainDemand()]);
+    const wetNow = isWet(live.now.kind);
+    let weatherNote = '';
+    if (rain.uplift != null && Math.abs(rain.uplift) >= 0.05) {
+      const pct = Math.round(rain.uplift * 100);
+      weatherNote = wetNow
+        ? ` 🌧️ It's ${live.now.kind.toLowerCase()} now — orders run ${pct > 0 ? '+' : ''}${pct}% per hour in wet weather. Stay online.`
+        : ` Rain usually brings ${pct > 0 ? '+' : ''}${pct}% more orders per hour.`;
+    } else if (wetNow) {
+      weatherNote = ` 🌧️ It's ${live.now.kind.toLowerCase()} now — ride carefully.`;
+    }
+
     return {
       success: true,
       hotspots,
       imbalanceThreshold: threshold,
       generatedAt: now.toISOString(),
-      insight,
+      insight: insight + weatherNote,
+      weather: {
+        kind: live.now.kind,
+        temperatureC: live.now.temperatureC,
+        source: live.source,
+        rainDemandUplift: rain.uplift,
+      },
     };
 }

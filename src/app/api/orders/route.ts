@@ -11,6 +11,7 @@ import {
 } from '@/lib/orderPricing';
 import { resolveOrderLines } from '@/lib/orderLines';
 import { haversineKm, toLatLng, travelMinutes, type LatLng } from '@/lib/geo';
+import { getYangonWeather } from '@/lib/weather';
 
 const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
 
@@ -297,9 +298,6 @@ export async function POST(request: Request) {
       console.warn('Restaurant coords lookup failed, using fallback:', lookupError);
     }
 
-    const weatherOptions = ['Sunny', 'Rainy', 'Cloudy', 'Stormy'] as const;
-    const randomWeather =
-      weatherOptions[Math.floor(Math.random() * weatherOptions.length)];
 
     const subtotal = subtotalFromItems(items);
     // Tip is the customer's choice; cap it to keep typos from creating huge charges.
@@ -369,7 +367,9 @@ export async function POST(request: Request) {
 
     // Surge is not charged to customers yet; analytics fields are simulated server-side.
     const surgePrice = 0;
-    const weather = randomWeather;
+    // Real Yangon weather at order time (Open-Meteo, cached 15 min).
+    const liveWeather = await getYangonWeather();
+    const weather = liveWeather.now.kind;
     const cancelReason = '';
     const prepTime = Math.floor(Math.random() * 25 + 12); // 12–36 mins simulated kitchen time
     // Travel time from the restaurant to the delivery pin (road-adjusted);
@@ -427,6 +427,7 @@ export async function POST(request: Request) {
       discount,
       surgePrice,
       weather,
+      weatherSource: liveWeather.source,
       cancelReason,
       prepTime,
       travelMins,

@@ -236,6 +236,12 @@ export function weatherCopy(weather: WeatherKind) {
       subtitle: 'Drinks and dessert for a sunny day',
     };
   }
+  if (weather === 'Cloudy') {
+    return {
+      title: 'Perfect Weather Match',
+      subtitle: 'Cool drinks and dessert for a mild, cloudy day',
+    };
+  }
   if (weather === 'Stormy') {
     return {
       title: 'Perfect Weather Match',
