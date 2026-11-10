@@ -46,6 +46,13 @@ loadEnvFile(resolve(process.cwd(), '.env.local'));
 loadEnvFile(resolve(process.cwd(), '.env'));
 
 const TOTAL_ORDERS = 10_000;
+/**
+ * `--orders-only`: only insert orders (skip refreshing menu/restaurant/profile
+ * images) and use a distinct order-number prefix. Safe to run on a live
+ * database that already has data.
+ */
+let ORDERS_ONLY = process.argv.includes('--orders-only');
+let ORDER_PREFIX = ORDERS_ONLY ? '#TASTE-' : '#BULK-';
 /** Keep batches small enough to avoid OOM; 500 or 1000 both work — default 500. */
 const BATCH_SIZE = Number(process.env.BULK_ORDER_BATCH_SIZE) === 1000 ? 1000 : 500;
 
@@ -574,7 +581,20 @@ function finalizeCounts(slots: OrderSlot[], counts: Map<string, number>): OrderS
   }));
 }
 
-async function seedBulkOrders() {
+/**
+ * Run the seed. From the CLI it exits the process when done; when imported
+ * (`cli: false`) it throws on failure, keeps the shared DB connection open and
+ * returns the number of inserted orders.
+ */
+export async function seedBulkOrders(
+  options: { ordersOnly?: boolean; cli?: boolean } = {}
+): Promise<number> {
+  const cli = options.cli !== false;
+  if (options.ordersOnly) {
+    ORDERS_ONLY = true;
+    ORDER_PREFIX = '#TASTE-';
+  }
+  let insertedResult = 0;
   console.log('\n📦 ════════════════════════════════════════════════');
   console.log('   FoodDash — Bulk Orders (10k · Insein RED skew)');
   console.log('════════════════════════════════════════════════\n');
@@ -601,7 +621,10 @@ async function seedBulkOrders() {
       RiderProfile.find({}).select('_id name').lean(),
     ]);
 
-    if (menuDocs.length) {
+    if (ORDERS_ONLY) {
+      console.log('⏭  --orders-only: keeping existing images');
+    }
+    if (menuDocs.length && !ORDERS_ONLY) {
       await MenuItem.bulkWrite(
         menuDocs.map((m) => ({
           updateOne: {
@@ -611,7 +634,7 @@ async function seedBulkOrders() {
         }))
       );
     }
-    if (restDocs.length) {
+    if (restDocs.length && !ORDERS_ONLY) {
       await RestaurantProfile.bulkWrite(
         restDocs.map((r) => ({
           updateOne: {
@@ -626,7 +649,7 @@ async function seedBulkOrders() {
         }))
       );
     }
-    if (custDocs.length) {
+    if (custDocs.length && !ORDERS_ONLY) {
       await CustomerProfile.bulkWrite(
         custDocs.map((c) => ({
           updateOne: {
@@ -636,7 +659,7 @@ async function seedBulkOrders() {
         }))
       );
     }
-    if (riderDocs.length) {
+    if (riderDocs.length && !ORDERS_ONLY) {
       await RiderProfile.bulkWrite(
         riderDocs.map((r) => ({
           updateOne: {
@@ -819,7 +842,7 @@ async function seedBulkOrders() {
         const review = withReview ? pick(REVIEW_COMMENTS) : undefined;
 
         batchDocs.push({
-          orderNumber: `#BULK-${String(index + 1).padStart(5, '0')}`,
+          orderNumber: `${ORDER_PREFIX}${String(index + 1).padStart(5, '0')}`,
           restaurantId: restaurant.restaurantId,
           restaurantName: restaurant.restaurantName || 'Restaurant',
           customerId: customer.customerId,
@@ -967,11 +990,14 @@ async function seedBulkOrders() {
     }
     console.log('════════════════════════════════════════════════\n');
 
+    insertedResult = insertedTotal;
     console.log('🔌 All 10,000 orders inserted — disconnecting from MongoDB…');
   } catch (error) {
     console.error('\n❌ Bulk order seed failed:', error);
+    if (!cli) throw error;
     process.exitCode = 1;
   } finally {
+    if (cli) {
     try {
       if (mongoose.connection.readyState !== 0) {
         await mongoose.disconnect();
@@ -983,7 +1009,11 @@ async function seedBulkOrders() {
       console.error('⚠️  MongoDB disconnect warning:', disconnectError);
     }
     process.exit(process.exitCode ?? 0);
+    }
   }
+  return insertedResult;
 }
 
-void seedBulkOrders();
+if (process.argv[1] && /seed-bulk-orders/.test(process.argv[1])) {
+  void seedBulkOrders();
+}
