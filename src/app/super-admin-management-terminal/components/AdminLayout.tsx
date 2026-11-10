@@ -20,6 +20,7 @@ import AdminInbox from './AdminInbox';
 import AdminServiceZones from './AdminServiceZones';
 import MLAnalyticsDashboard from './MLAnalyticsDashboard';
 import RFMDashboard from './RFMDashboard';
+import RecommenderAccuracy from './RecommenderAccuracy';
 import DataSyncStatus from './DataSyncStatus';
 import UserLookup from './UserLookup';
 import ShareAppQR from '@/components/ShareAppQR';
@@ -195,6 +196,7 @@ function AdminTabContent({
           </div>
           <AdvancedAnalytics />
           <MLAnalyticsDashboard />
+          <RecommenderAccuracy />
           <RFMDashboard />
         </div>
       );
@@ -243,6 +245,7 @@ function AdminTabContent({
           <OrderVolumeChart data={adminStats?.hourlyData} />
           <AdvancedAnalytics />
           <MLAnalyticsDashboard />
+          <RecommenderAccuracy />
           <RFMDashboard />
         </div>
       );

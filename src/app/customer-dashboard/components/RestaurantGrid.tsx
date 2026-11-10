@@ -7,7 +7,7 @@ import { formatMMK } from '@/lib/currency';
 import { formatRating } from '@/lib/formatRating';
 import type { DeliveryAddressInfo, Restaurant } from '../types';
 
-type RestaurantProfileDoc = {
+export type RestaurantProfileDoc = {
   restaurantId?: string;
   restaurantName?: string;
   description?: string;
@@ -68,7 +68,7 @@ function parseRating(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restaurant {
+export function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restaurant {
   const coverImage = profile.coverImage || '';
   const logoImage = profile.logoImage || '';
   const image = coverImage || logoImage || PLACEHOLDER_IMAGE;
