@@ -16,6 +16,7 @@ import AddressPickerModal, { type PickedAddress } from './components/AddressPick
 import CustomerProfile from './components/CustomerProfile';
 import AIRecommendations, { type AiLane } from './components/AIRecommendations';
 import ForYou from './components/ForYou';
+import ParcelEntryCard from './components/ParcelEntryCard';
 import { useRouter } from 'next/navigation';
 import type { CartItem, DeliveryAddressInfo, OrderTotals, Restaurant } from './types';
 
@@ -192,6 +193,7 @@ function CustomerTabContent({
               onDismiss={onClearActiveOrder}
             />
           )}
+          <ParcelEntryCard />
           <AIRecommendations
             compactEntry
             onOpenLane={onOpenAiPicks}

@@ -1,9 +1,10 @@
 'use client';
 
+import RiderParcels from './RiderParcels';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  Bike, Home, DollarSign, ClipboardList, Settings, LogOut,
+  Bike, Home, DollarSign, ClipboardList, Settings, LogOut, Package,
   MapPin, Phone, MessageCircle, Clock, Star, Navigation,
   CheckCircle, X, TrendingUp, Route, Wallet,
   UtensilsCrossed, Map as MapIcon, Save, Camera, User, Lock,
@@ -59,7 +60,7 @@ const MOCK_COORDS = {
 };
 
 type DutyStatus = 'OFFLINE' | 'AVAILABLE' | 'DELIVERING';
-type RiderTab = 'home' | 'routes' | 'earnings' | 'trips' | 'settings';
+type RiderTab = 'home' | 'routes' | 'parcels' | 'earnings' | 'trips' | 'settings';
 type RouteStopType = 'FOOD';
 type RouteStopStatus = 'COMPLETED' | 'CURRENT' | 'UPCOMING';
 
@@ -199,6 +200,7 @@ const ROUTE_TYPE_META: Record<
 const NAV_ITEMS: { key: string; label: string; icon: React.ElementType; id: RiderTab }[] = [
   { key: 'rnav-home', label: 'Home', icon: Home, id: 'home' },
   { key: 'rnav-routes', label: 'Routes', icon: MapIcon, id: 'routes' },
+  { key: 'rnav-parcels', label: 'Parcels', icon: Package, id: 'parcels' },
   { key: 'rnav-earnings', label: 'Earnings', icon: DollarSign, id: 'earnings' },
   { key: 'rnav-trips', label: 'Trips', icon: ClipboardList, id: 'trips' },
   { key: 'rnav-settings', label: 'Settings', icon: Settings, id: 'settings' },
@@ -1738,6 +1740,8 @@ export default function RiderDashboardClient() {
             )}
 
             {/* SETTINGS */}
+            {activeTab === 'parcels' && <RiderParcels online={dutyStatus !== 'OFFLINE'} />}
+
             {activeTab === 'settings' && (
               <div className="mx-auto max-w-xl space-y-4 animate-fade-in lg:max-w-2xl">
                 <SectionLabel>Account Settings</SectionLabel>

@@ -21,6 +21,7 @@ import AdminServiceZones from './AdminServiceZones';
 import MLAnalyticsDashboard from './MLAnalyticsDashboard';
 import RFMDashboard from './RFMDashboard';
 import RecommenderAccuracy from './RecommenderAccuracy';
+import ParcelOverview from './ParcelOverview';
 import DataSyncStatus from './DataSyncStatus';
 import UserLookup from './UserLookup';
 import ShareAppQR from '@/components/ShareAppQR';
@@ -194,6 +195,7 @@ function AdminTabContent({
             </div>
             <ShareAppQR />
           </div>
+          <ParcelOverview />
           <AdvancedAnalytics />
           <MLAnalyticsDashboard />
           <RecommenderAccuracy />
@@ -243,6 +245,7 @@ function AdminTabContent({
         <div className="mx-auto max-w-screen-2xl space-y-6 p-6 xl:p-8">
           <AdminKPIs data={adminStats?.kpis} />
           <OrderVolumeChart data={adminStats?.hourlyData} />
+          <ParcelOverview />
           <AdvancedAnalytics />
           <MLAnalyticsDashboard />
           <RecommenderAccuracy />
