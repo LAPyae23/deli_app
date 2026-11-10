@@ -140,6 +140,17 @@ export async function PATCH(
         { status: 404 }
       );
     }
+    if (
+      session.role === 'RIDER' &&
+      body.riderId != null &&
+      !isUnassigned(ownedOrder) &&
+      String(ownedOrder.riderId) !== session.userId
+    ) {
+      return NextResponse.json(
+        { success: false, message: 'Another rider has already taken this order' },
+        { status: 409 }
+      );
+    }
     if (!(await canAccessOrder(session, ownedOrder))) {
       return forbidden('You do not have access to this order');
     }
@@ -315,16 +326,32 @@ export async function PATCH(
       );
     }
 
-    const updatedOrder = await Order.findByIdAndUpdate(
-      id,
-      { $set: updateData },
-      { new: true }
-    );
+    // Atomic guards: the write only lands if the order is still in the state
+    // we checked. Stops two riders claiming the same order, and two people
+    // changing the status at the same moment.
+    const filter: Record<string, unknown> = { _id: id };
+    const isClaim =
+      body.riderId != null &&
+      String(body.riderId).trim() !== '' &&
+      String(body.riderId).trim() !== String(existingOrder.riderId || '');
+    if (isClaim && session.role !== 'ADMIN') {
+      filter.$or = [{ riderId: { $exists: false } }, { riderId: null }, { riderId: '' }];
+    }
+    if (updateData.status != null && existingOrder.status != null) {
+      filter.status = existingOrder.status;
+    }
+
+    const updatedOrder = await Order.findOneAndUpdate(filter, { $set: updateData }, { new: true });
 
     if (!updatedOrder) {
       return NextResponse.json(
-        { success: false, message: 'Order not found' },
-        { status: 404 }
+        {
+          success: false,
+          message: isClaim
+            ? 'Another rider has already taken this order'
+            : 'This order was just updated by someone else. Please refresh.',
+        },
+        { status: 409 }
       );
     }
 

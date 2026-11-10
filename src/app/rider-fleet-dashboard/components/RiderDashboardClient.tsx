@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Bike, Home, DollarSign, ClipboardList, Settings, LogOut,
@@ -157,7 +157,10 @@ function mapApiOrderToDispatch(raw: Record<string, unknown>): DispatchOrder {
     customerAddr: String(deliveryAddress.address || 'Customer address'),
     customerId: String(raw.customerId || ''),
     customerName: String(raw.customerName || 'Customer'),
-    pickupDistance: 'Nearby',
+    pickupDistance:
+      raw.pickupDistanceKm != null && Number.isFinite(Number(raw.pickupDistanceKm))
+        ? `${Number(raw.pickupDistanceKm).toFixed(1)} km`
+        : 'Nearby',
     dropDistance: `${dropKm.toFixed(1)} km`,
     estimatedEarnings:
       deliveryFee > 0 ? Math.round(deliveryFee * 0.9) : Math.max(1500, Math.round(total * 0.12)),
@@ -311,6 +314,8 @@ export default function RiderDashboardClient() {
   >([]);
   const [activeTab, setActiveTab] = useState<RiderTab>('home');
   const [riderPos, setRiderPos] = useState(INITIAL_RIDER_POS);
+  /** Last real GPS fix (null until the device reports one). */
+  const riderPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const [accepting, setAccepting] = useState(false);
   const [profile, setProfile] = useState<RiderProfileForm>(INITIAL_PROFILE);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -539,6 +544,11 @@ export default function RiderDashboardClient() {
           limit: '20',
         });
         if (riderId) params.set('forRiderId', riderId);
+        // Our GPS position lets the server offer each order to the nearest riders first.
+        if (riderPosRef.current) {
+          params.set('lat', String(riderPosRef.current.lat));
+          params.set('lng', String(riderPosRef.current.lng));
+        }
 
         const res = await fetch(`/api/orders?${params.toString()}`);
         const data = await res.json();
@@ -629,6 +639,7 @@ export default function RiderDashboardClient() {
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
         setRiderPos({ lat, lng });
+        riderPosRef.current = { lat, lng };
         void patchRiderCoords(lat, lng);
       },
       (error) => {
@@ -719,6 +730,8 @@ export default function RiderDashboardClient() {
       void loadRoutes();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to accept dispatch');
+      // Usually another rider took it first: drop the card so the next order can show.
+      setIncomingDispatch(null);
     } finally {
       setAccepting(false);
     }

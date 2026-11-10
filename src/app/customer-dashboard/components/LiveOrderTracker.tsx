@@ -1,5 +1,6 @@
 'use client';
 
+import { travelMinutes } from '@/lib/geo';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
@@ -271,11 +272,14 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
               Number.isFinite(riderLat) && Number.isFinite(riderLng)
                 ? { lat: riderLat, lng: riderLng }
                 : restaurant;
-            const riderDistKm = haversineKm(riderPos, customer);
-            const travelMins =
-              Number.isFinite(travelFromOrder) && travelFromOrder > 0
+            const hasLiveRider = Number.isFinite(riderLat) && Number.isFinite(riderLng);
+            // Live: recompute from the rider's current GPS position each poll,
+            // so the countdown shrinks as the rider gets closer.
+            const travelMins = hasLiveRider
+              ? travelMinutes(riderPos, customer)
+              : Number.isFinite(travelFromOrder) && travelFromOrder > 0
                 ? travelFromOrder
-                : Math.max(5, Math.round(riderDistKm * 3));
+                : travelMinutes(restaurant, customer);
             const riderTimeSeconds = travelMins * 60;
             setEtaSeconds((prev) =>
               Math.abs(prev - riderTimeSeconds) > 30 ? riderTimeSeconds : prev

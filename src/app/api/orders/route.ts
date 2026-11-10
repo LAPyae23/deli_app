@@ -10,8 +10,70 @@ import {
   subtotalFromItems,
 } from '@/lib/orderPricing';
 import { resolveOrderLines } from '@/lib/orderLines';
+import { haversineKm, toLatLng, travelMinutes, type LatLng } from '@/lib/geo';
 
 const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
+
+/** A new dispatch is offered to the nearest riders first... */
+const DISPATCH_NEAREST_RIDERS = 3;
+/** ...and to every online rider once it has waited this long. */
+const DISPATCH_EXCLUSIVE_SECONDS = 45;
+
+/**
+ * Nearest-rider priority for the dispatch pool. Each order is shown only to
+ * the DISPATCH_NEAREST_RIDERS online riders closest to the restaurant until
+ * it has waited DISPATCH_EXCLUSIVE_SECONDS; after that every online rider
+ * sees it. Adds the real pickup distance to each order.
+ */
+async function rankDispatchForRider(
+  riderId: string,
+  orders: Array<Record<string, unknown>>,
+  searchParams: URLSearchParams
+) {
+  const RiderProfile = (await import('@/models/RiderProfile')).default;
+  const reported = toLatLng({ lat: searchParams.get('lat'), lng: searchParams.get('lng') });
+  if (reported) {
+    await RiderProfile.updateOne(
+      { riderId },
+      { $set: { riderCoords: reported, location: reported } }
+    );
+  }
+  const online = await RiderProfile.find({ status: 'Online', isBlocked: { $ne: true } })
+    .select('riderId riderCoords location')
+    .lean<Array<{ riderId: string; riderCoords?: unknown; location?: unknown }>>();
+  const positions = online
+    .map((r) => ({ id: String(r.riderId), at: toLatLng(r.riderCoords) || toLatLng(r.location) }))
+    .filter((r): r is { id: string; at: LatLng } => Boolean(r.at));
+  const me = reported || positions.find((p) => p.id === riderId)?.at || null;
+  const now = Date.now();
+
+  return orders
+    .map((order) => {
+      const pickup = toLatLng(order.restaurantCoords);
+      const pickupDistanceKm = me && pickup ? haversineKm(me, pickup) : null;
+      let rank = 0;
+      if (pickup && pickupDistanceKm != null) {
+        rank = positions.filter(
+          (p) => p.id !== riderId && haversineKm(p.at, pickup) < pickupDistanceKm
+        ).length;
+      }
+      const offeredAt = new Date(String(order.updatedAt || order.createdAt)).getTime();
+      const waitedSeconds = Number.isFinite(offeredAt) ? (now - offeredAt) / 1000 : Infinity;
+      const visible =
+        pickupDistanceKm == null ||
+        rank < DISPATCH_NEAREST_RIDERS ||
+        waitedSeconds >= DISPATCH_EXCLUSIVE_SECONDS;
+      return visible
+        ? {
+            ...order,
+            pickupDistanceKm:
+              pickupDistanceKm == null ? null : Number(pickupDistanceKm.toFixed(2)),
+            nearestRank: rank + 1,
+          }
+        : null;
+    })
+    .filter(Boolean);
+}
 
 export async function GET(request: Request) {
   try {
@@ -118,13 +180,23 @@ export async function GET(request: Request) {
     const limit =
       Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(100, parsedLimit) : 50;
 
+    const riderDispatch = session.role === 'RIDER' && isDispatchPool;
     const orders = await Order.find(query)
       .select(
         'orderNumber restaurantName restaurantId customerId customerName status items.name items.quantity items.price items.category items.unitPrice items.id items.options items.note items.restaurantName items.image items.imageAlt totals deliveryAddress paymentMethod createdAt updatedAt riderId riderName prepTime travelMins durationMins restaurantCoords riderCoords discount tipAmount'
       )
-      .sort({ createdAt: -1 })
+      // Dispatch pool: oldest first so waiting orders are not starved.
+      .sort({ createdAt: riderDispatch ? 1 : -1 })
       .limit(limit)
       .lean();
+
+    if (riderDispatch) {
+      return NextResponse.json({
+        success: true,
+        orders: await rankDispatchForRider(session.userId, orders, searchParams),
+        limit,
+      });
+    }
     return NextResponse.json({ success: true, orders, limit });
   } catch (error) {
     console.error('Orders GET error:', error);
@@ -300,7 +372,12 @@ export async function POST(request: Request) {
     const weather = randomWeather;
     const cancelReason = '';
     const prepTime = Math.floor(Math.random() * 25 + 12); // 12–36 mins simulated kitchen time
-    const travelMins = Math.floor(Math.random() * 25 + 10); // 10–34 mins simulated rider travel
+    // Travel time from the restaurant to the delivery pin (road-adjusted);
+    // falls back to a typical 3.5 km trip when the address has no coordinates.
+    const dropoff = toLatLng(body.deliveryAddress);
+    const travelMins = dropoff
+      ? travelMinutes(restaurantCoords, dropoff)
+      : Math.round(4 + 3.5 * 3);
     const durationMins = prepTime + travelMins;
 
     const [orderSeq, priorCustomerOrders] = await Promise.all([
