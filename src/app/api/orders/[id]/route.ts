@@ -17,6 +17,7 @@ type OrderOwnership = {
   restaurantName?: unknown;
   riderId?: unknown;
   unassigned?: unknown;
+  status?: unknown;
 };
 
 function isUnassigned(order: OrderOwnership) {
@@ -24,6 +25,32 @@ function isUnassigned(order: OrderOwnership) {
 }
 
 /** Whether the signed-in user is a party to this order. */
+/** Which status changes each role may make: from → allowed next statuses. */
+const STATUS_TRANSITIONS: Record<Exclude<Session['role'], 'ADMIN'>, Record<string, string[]>> = {
+  CUSTOMER: {
+    PENDING: ['CANCELLED'],
+    PREPARING: ['CANCELLED'],
+  },
+  RESTAURANT: {
+    PENDING: ['PREPARING', 'REJECTED'],
+    PREPARING: ['READY', 'CANCELLED'],
+  },
+  RIDER: {
+    PREPARING: ['OUT_FOR_DELIVERY'],
+    READY: ['OUT_FOR_DELIVERY'],
+    OUT_FOR_DELIVERY: ['DELIVERED'],
+  },
+};
+
+/** Body fields each role may send; anything else is ignored. */
+const ALLOWED_FIELDS: Record<Exclude<Session['role'], 'ADMIN'>, string[]> = {
+  CUSTOMER: ['status', 'cancelReason', 'riderRating', 'restaurantRating', 'reviewComment'],
+  RESTAURANT: ['status', 'prepTime', 'cancelReason'],
+  RIDER: ['status', 'riderId', 'riderName', 'riderCoords', 'travelMins', 'distanceKm', 'durationMins'],
+};
+
+const RATING_FIELDS = ['riderRating', 'restaurantRating', 'reviewComment'];
+
 async function canAccessOrder(session: Session, order: OrderOwnership) {
   switch (session.role) {
     case 'ADMIN':
@@ -105,7 +132,7 @@ export async function PATCH(
     const session = getSession(request);
     if (!session) return unauthorized();
     const ownedOrder = await Order.findById(id)
-      .select('customerId restaurantId restaurantName riderId unassigned')
+      .select('customerId restaurantId restaurantName riderId unassigned status')
       .lean<OrderOwnership>();
     if (!ownedOrder) {
       return NextResponse.json(
@@ -130,6 +157,55 @@ export async function PATCH(
     }
     if (session.role === 'RIDER' && isUnassigned(ownedOrder) && body.riderId == null) {
       return forbidden('Accept the order before updating it');
+    }
+
+    if (session.role !== 'ADMIN') {
+      // Drop fields this role is not allowed to change.
+      const allowed = new Set(ALLOWED_FIELDS[session.role]);
+      for (const key of Object.keys(body)) {
+        if (!allowed.has(key)) delete body[key];
+      }
+
+      const currentStatus = String(ownedOrder.status || 'PENDING').toUpperCase();
+      if (body.status != null) {
+        const requested = String(body.status).toUpperCase();
+        if (requested === currentStatus) {
+          delete body.status; // no-op
+        } else {
+          const nextAllowed = STATUS_TRANSITIONS[session.role][currentStatus] || [];
+          if (!nextAllowed.includes(requested)) {
+            return NextResponse.json(
+              {
+                success: false,
+                message: `Cannot change order from ${currentStatus} to ${requested}`,
+              },
+              { status: 409 }
+            );
+          }
+        }
+      }
+
+      if (
+        session.role === 'CUSTOMER' &&
+        RATING_FIELDS.some((f) => body[f] != null) &&
+        currentStatus !== 'DELIVERED'
+      ) {
+        return NextResponse.json(
+          { success: false, message: 'You can rate an order after it is delivered' },
+          { status: 409 }
+        );
+      }
+      for (const f of ['riderRating', 'restaurantRating']) {
+        if (body[f] != null) {
+          const r = Number(body[f]);
+          if (!Number.isFinite(r) || r < 1 || r > 5) {
+            return NextResponse.json(
+              { success: false, message: 'Rating must be between 1 and 5' },
+              { status: 400 }
+            );
+          }
+        }
+      }
     }
 
     const updateData: Record<string, unknown> = {};

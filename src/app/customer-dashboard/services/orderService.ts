@@ -21,10 +21,8 @@ export type PlaceOrderResponse = {
 };
 
 export async function placeOrder(payload: PlaceOrderPayload): Promise<PlaceOrderResponse> {
-  const customerId = localStorage.getItem('fooddash_session_id') || '';
   const body = {
     ...payload,
-    customerId,
     restaurantId: payload.restaurantId || '',
     discount: payload.discount ?? payload.totals?.discount ?? 0,
     promoCodeUsed: payload.promoCodeUsed || payload.totals?.promoCodeUsed || '',
@@ -44,17 +42,7 @@ export async function placeOrder(payload: PlaceOrderPayload): Promise<PlaceOrder
 
   const result = (await res.json()) as PlaceOrderResponse;
 
-  if (payload.totals.promoApplied) {
-    try {
-      await fetch('/api/customer/consume-promo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId }),
-      });
-    } catch (error) {
-      console.warn('Failed to consume promo after order', error);
-    }
-  }
+  // The server validates and consumes the promo code when the order is created.
 
   return result;
 }

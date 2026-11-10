@@ -9,6 +9,7 @@ import {
   calculateOrderPricing,
   subtotalFromItems,
 } from '@/lib/orderPricing';
+import { resolveOrderLines } from '@/lib/orderLines';
 
 const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
 
@@ -155,6 +156,14 @@ export async function POST(request: Request) {
       );
     }
 
+    // Price, add-ons, stock and restaurant come from the database, not the client.
+    const resolved = await resolveOrderLines(body.items, String(body.restaurantId || ''));
+    if (!resolved.ok) {
+      return NextResponse.json({ success: false, message: resolved.message }, { status: 400 });
+    }
+    const items = resolved.items;
+    body.restaurantId = resolved.restaurantId;
+
     // Block orders to CLOSED / BUSY restaurants
     if (body.restaurantId) {
       const restaurantProfile = await RestaurantProfile.findOne({
@@ -180,106 +189,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Validate stock before creating the order
-    const cartLines = (Array.isArray(body.items) ? body.items : []) as Array<{
-      id?: string;
-      name?: string;
-      quantity?: number;
-    }>;
-    for (const line of cartLines) {
-      const menuItemId = String(line.id || '').split('__')[0];
-      const quantity = Number(line.quantity) || 1;
-      if (!menuItemId || quantity <= 0) continue;
-
-      const menuItem = await MenuItem.findById(menuItemId)
-        .select('name stockQuantity isAvailable')
-        .lean();
-      if (!menuItem) continue;
-
-      if (!menuItem.isAvailable || Number(menuItem.stockQuantity) <= 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            message: `${menuItem.name || 'Item'} is out of stock`,
-          },
-          { status: 400 }
-        );
-      }
-      if (Number(menuItem.stockQuantity) < quantity) {
-        return NextResponse.json(
-          {
-            success: false,
-            message: `Only ${menuItem.stockQuantity} left of ${menuItem.name}`,
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    const CATEGORIES = ['Fast Food', 'Burmese', 'Drinks', 'Dessert'] as const;
-    type OrderCategory = (typeof CATEGORIES)[number];
-
-    function normalizeCategory(raw?: string): OrderCategory {
-      if (!raw) return 'Fast Food';
-      const match = CATEGORIES.find(
-        (c) => c.toLowerCase() === raw.toLowerCase()
-      );
-      if (match) return match;
-      const lower = raw.toLowerCase();
-      if (lower.includes('drink') || lower.includes('beverage')) return 'Drinks';
-      if (lower.includes('dessert') || lower.includes('sweet')) return 'Dessert';
-      if (lower.includes('burmese') || lower.includes('myanmar')) return 'Burmese';
-      return 'Fast Food';
-    }
-
-    const rawItems = body.items as Array<Record<string, unknown>>;
-    const items = await Promise.all(
-      rawItems.map(async (item) => {
-        const unitPrice = Number(item.unitPrice ?? item.price) || 0;
-        let category = normalizeCategory(
-          typeof item.category === 'string' ? item.category : undefined
-        );
-
-        // Try to resolve category from MenuItem when not provided
-        if (!item.category) {
-          const menuItemId = String(item.id || '').split('__')[0];
-          if (menuItemId) {
-            try {
-              const menuDoc = await MenuItem.findById(menuItemId)
-                .select('category')
-                .lean();
-              if (menuDoc?.category) {
-                category = normalizeCategory(String(menuDoc.category));
-              }
-            } catch {
-              // keep default category
-            }
-          }
-        }
-
-        return {
-          id: String(item.id ?? ''),
-          name: String(item.name || 'Item'),
-          category,
-          price: unitPrice,
-          quantity: Number(item.quantity) || 1,
-          options: String(item.options ?? ''),
-          unitPrice,
-          restaurantName: item.restaurantName
-            ? String(item.restaurantName)
-            : undefined,
-          image: item.image ? String(item.image) : undefined,
-          imageAlt: item.imageAlt ? String(item.imageAlt) : undefined,
-          note: item.note ? String(item.note) : undefined,
-        };
-      })
-    );
-
-    let restaurantName =
-      body.restaurantName || items[0]?.restaurantName || 'Burger Bliss';
-    let restaurantId = String(
-      body.restaurantId || rawItems[0]?.restaurantId || ''
-    ).trim();
+    let restaurantName = String(body.restaurantName || items[0]?.restaurantName || '');
+    let restaurantId = resolved.restaurantId;
 
     let restaurantCoords = { ...FALLBACK_COORDS };
     try {
@@ -319,63 +230,82 @@ export async function POST(request: Request) {
       weatherOptions[Math.floor(Math.random() * weatherOptions.length)];
 
     const subtotal = subtotalFromItems(items);
-    const requestedDelivery = Number(body.totals?.deliveryFee);
-    const tipAmount = Math.max(
-      0,
-      Math.round(Number(body.tipAmount ?? body.totals?.tipAmount) || 0)
+    // Tip is the customer's choice; cap it to keep typos from creating huge charges.
+    const tipAmount = Math.min(
+      100_000,
+      Math.max(0, Math.round(Number(body.tipAmount ?? body.totals?.tipAmount) || 0))
     );
-    const pricing = calculateOrderPricing({
-      subtotal,
-      deliveryFee: requestedDelivery,
-      tipAmount,
-    });
+    // Delivery fee is computed on the server (client value ignored).
+    const pricing = calculateOrderPricing({ subtotal, tipAmount });
 
-    const discount =
-      body.discount != null && Number.isFinite(Number(body.discount))
-        ? Math.max(0, Number(body.discount))
-        : Number(body.totals?.discount) || 0;
+    const customerId = session.userId;
 
-    const surgePrice =
-      body.surgePrice != null && Number.isFinite(Number(body.surgePrice))
-        ? Math.max(0, Number(body.surgePrice))
-        : Number(body.totals?.surgePrice) || 0;
-
-    const weather =
-      typeof body.weather === 'string' &&
-      weatherOptions.includes(body.weather as (typeof weatherOptions)[number])
-        ? body.weather
-        : randomWeather;
-
-    const cancelReason =
-      typeof body.cancelReason === 'string' ? body.cancelReason : '';
-
-    const prepTime =
-      body.prepTime != null && Number.isFinite(Number(body.prepTime))
-        ? Number(body.prepTime)
-        : Math.floor(Math.random() * 25 + 12); // 12–36 mins simulated kitchen time
-
-    const travelMins =
-      body.travelMins != null && Number.isFinite(Number(body.travelMins))
-        ? Number(body.travelMins)
-        : Math.floor(Math.random() * 25 + 10); // 10–34 mins simulated rider travel
-
-    const durationMins =
-      body.durationMins != null && Number.isFinite(Number(body.durationMins))
-        ? Number(body.durationMins)
-        : prepTime + travelMins;
-
-    const promoApplied = Boolean(body.totals?.promoApplied || body.promoApplied);
-    const promoCodeUsed = String(
-      body.promoCodeUsed || body.totals?.promoCodeUsed || ''
-    )
+    // Promo: only a code granted to this customer counts, and it is consumed
+    // atomically here so the same code cannot be used twice.
+    const promoCodeRequested = String(body.promoCodeUsed || body.totals?.promoCodeUsed || '')
       .trim()
       .toUpperCase();
-    const customerId = String(body.customerId || 'guest');
+    let discountPercent = 0;
+    let promoCodeUsed = '';
+    let promoRestore: Record<string, unknown> | null = null;
+    if (promoCodeRequested) {
+      const profile = await CustomerProfile.findOne({ customerId })
+        .select('hasPromo promoCode promoDiscountPercent hasStreakReward streakVoucherCode streakDiscountPercent')
+        .lean<{
+          hasPromo?: boolean;
+          promoCode?: string;
+          promoDiscountPercent?: number;
+          hasStreakReward?: boolean;
+          streakVoucherCode?: string;
+          streakDiscountPercent?: number;
+        }>();
+      const adminCode = String(profile?.promoCode || '').trim().toUpperCase();
+      const streakCode = String(profile?.streakVoucherCode || '').trim().toUpperCase();
+      if (profile?.hasPromo && adminCode && adminCode === promoCodeRequested) {
+        const claimed = await CustomerProfile.findOneAndUpdate(
+          { customerId, hasPromo: true, promoCode: profile.promoCode },
+          { $set: { hasPromo: false, promoCode: '', promoDiscountPercent: 0 } }
+        );
+        if (claimed) {
+          discountPercent = Number(profile.promoDiscountPercent) || 0;
+          promoCodeUsed = promoCodeRequested;
+          promoRestore = {
+            hasPromo: true,
+            promoCode: profile.promoCode,
+            promoDiscountPercent: profile.promoDiscountPercent,
+          };
+        }
+      } else if (profile?.hasStreakReward && streakCode && streakCode === promoCodeRequested) {
+        const claimed = await CustomerProfile.findOneAndUpdate(
+          { customerId, hasStreakReward: true, streakVoucherCode: profile.streakVoucherCode },
+          { $set: { hasStreakReward: false, streakVoucherCode: '', streakDiscountPercent: 0 } }
+        );
+        if (claimed) {
+          discountPercent = Number(profile.streakDiscountPercent) || 0;
+          promoCodeUsed = promoCodeRequested;
+          promoRestore = {
+            hasStreakReward: true,
+            streakVoucherCode: profile.streakVoucherCode,
+            streakDiscountPercent: profile.streakDiscountPercent,
+          };
+        }
+      }
+    }
+    discountPercent = Math.min(100, Math.max(0, discountPercent));
+    const discount = Math.round(pricing.subtotal * (discountPercent / 100));
+    const promoApplied = discount > 0;
+
+    // Surge is not charged to customers yet; analytics fields are simulated server-side.
+    const surgePrice = 0;
+    const weather = randomWeather;
+    const cancelReason = '';
+    const prepTime = Math.floor(Math.random() * 25 + 12); // 12–36 mins simulated kitchen time
+    const travelMins = Math.floor(Math.random() * 25 + 10); // 10–34 mins simulated rider travel
+    const durationMins = prepTime + travelMins;
+
     const [orderSeq, priorCustomerOrders] = await Promise.all([
       Order.countDocuments(),
-      customerId && customerId !== 'guest'
-        ? Order.countDocuments({ customerId })
-        : Promise.resolve(0),
+      Order.countDocuments({ customerId }),
     ]);
     const orderNumber = `#FP-${String(orderSeq + 1).padStart(5, '0')}`;
     const customerOrderCount = priorCustomerOrders + 1;
@@ -403,7 +333,9 @@ export async function POST(request: Request) {
           : body.deliveryAddress?.township || '',
     };
 
-    const newOrder = await Order.create({
+    let newOrder;
+    try {
+      newOrder = await Order.create({
       orderNumber,
       restaurantName,
       restaurantId,
@@ -427,40 +359,16 @@ export async function POST(request: Request) {
       baseRiderFee: Math.max(0, pricing.riderEarning - pricing.tipAmount),
       tipAmount: pricing.tipAmount,
     });
-
-    if (promoCodeUsed && customerId && customerId !== 'guest') {
-      try {
-        const profile = await CustomerProfile.findOne({ customerId }).lean();
-        if (profile) {
-          const adminCode = String(profile.promoCode || '').trim().toUpperCase();
-          const streakCode = String(profile.streakVoucherCode || '')
-            .trim()
-            .toUpperCase();
-          const unset: Record<string, unknown> = {};
-          if (!adminCode || promoCodeUsed === adminCode || Boolean(profile.hasPromo)) {
-            unset.hasPromo = false;
-            unset.promoCode = '';
-            unset.promoDiscountPercent = 0;
-          }
-          if (streakCode && promoCodeUsed === streakCode) {
-            unset.hasStreakReward = false;
-            unset.streakVoucherCode = '';
-            unset.streakDiscountPercent = 0;
-          }
-          if (Object.keys(unset).length > 0) {
-            await CustomerProfile.updateOne({ customerId }, { $set: unset });
-          }
-        }
-      } catch (promoError) {
-        console.warn('Failed to consume promo after order:', promoError);
+    } catch (createError) {
+      if (promoRestore) {
+        await CustomerProfile.updateOne({ customerId }, { $set: promoRestore }).catch(() => {});
       }
+      throw createError;
     }
 
     // Auto-deduct menu stock for each ordered item
-    for (const item of body.items as Array<{ id?: string; quantity?: number }>) {
-      // Cart line ids may be `${menuItemId}__${addons}` — use the MenuItem _id only
-      const menuItemId = String(item.id || '').split('__')[0];
-      const quantity = Number(item.quantity) || 1;
+    for (const item of items) {
+      const { menuItemId, quantity } = item;
 
       if (!menuItemId || quantity <= 0) continue;
 
