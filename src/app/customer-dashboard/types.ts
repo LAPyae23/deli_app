@@ -46,6 +46,8 @@ export type Restaurant = {
   coverImage?: string;
   tags: string[];
   isOpen: boolean;
+  /** 'HH:MM' local opening time, used to say when a closed shop opens. */
+  openingTime?: string;
   storeStatus?: 'OPEN' | 'BUSY' | 'CLOSED';
   discount: string | null;
   lat?: number;

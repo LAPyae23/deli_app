@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Star, Clock, Bike, Loader2, Store, MapPin } from 'lucide-react';
 import AppImage from '@/components/ui/AppImage';
@@ -85,7 +86,7 @@ export function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restauran
     rating: parseRating(profile.rating),
     reviews: Number(profile.reviews) || 0,
     deliveryTime: '20-35 min',
-    deliveryFee: 1500,
+    deliveryFee: DEFAULT_DELIVERY_FEE_KS,
     minOrder: 0,
     image,
     imageAlt: `${name} cover photo`,
@@ -93,6 +94,7 @@ export function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restauran
     coverImage,
     tags: [],
     isOpen,
+    openingTime: profile.openingTime,
     storeStatus,
     discount: null,
     lat: Number.isFinite(lat) ? lat : undefined,
@@ -104,7 +106,7 @@ export function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restauran
 function restaurantBadge(r: Restaurant): { label: string; show: boolean } {
   if (r.storeStatus === 'CLOSED') return { label: 'Closed', show: true };
   if (r.storeStatus === 'BUSY') return { label: 'Temporarily Unavailable', show: true };
-  if (!r.isOpen) return { label: 'Closed Now', show: true };
+  if (!r.isOpen) return { label: r.openingTime ? `Opens at ${r.openingTime}` : 'Closed Now', show: true };
   return { label: '', show: false };
 }
 
@@ -202,7 +204,12 @@ export default function RestaurantGrid({
 
         return (restaurant.distanceKm ?? 0) <= maxRadiusKm;
       })
-      .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+      // Open restaurants first, then nearest.
+      .sort(
+        (a, b) =>
+          Number(canSelectRestaurant(b)) - Number(canSelectRestaurant(a)) ||
+          (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+      );
   }, [restaurants, deliveryAddress?.lat, deliveryAddress?.lng, maxRadiusKm]);
 
   const filteredRestaurants = nearbyRestaurants.filter((restaurant) => {
@@ -220,6 +227,11 @@ export default function RestaurantGrid({
       <div className="mb-5">
         <h2 className="text-lg font-bold text-foreground">Restaurants Near You</h2>
         <p className="text-sm text-muted-foreground">
+          {nearbyRestaurants.length > 0 && (
+            <span className="font-semibold text-foreground">
+              {nearbyRestaurants.filter(canSelectRestaurant).length} open now ·{' '}
+            </span>
+          )}
           Within {maxRadiusKm} km of your delivery address
           {deliveryAddress?.address ? ` · ${deliveryAddress.address}` : ''}
         </p>
@@ -296,7 +308,7 @@ export default function RestaurantGrid({
                 className={`group overflow-hidden rounded-xl border border-border bg-card card-shadow transition-all duration-200 ${
                   selectable
                     ? 'cursor-pointer hover:card-shadow-md'
-                    : 'cursor-not-allowed grayscale opacity-60'
+                    : 'cursor-not-allowed opacity-75'
                 }`}
               >
                 <div className="relative h-40 overflow-hidden bg-muted">
@@ -306,7 +318,7 @@ export default function RestaurantGrid({
                       fill
                       fallbackSrc={PLACEHOLDER_IMAGE}
                       className={`object-cover transition-transform duration-300 ${
-                        selectable ? 'group-hover:scale-105' : ''
+                        selectable ? 'group-hover:scale-105' : 'grayscale'
                       }`}
                       sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
                     />

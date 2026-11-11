@@ -220,14 +220,10 @@ async function buildHeatmap() {
             ? Number(saved.multiplier)
             : liveMultiplier;
 
-        let demandScore = imbalance
+        const demandScore = imbalance
           ? Math.min(100, 55 + Math.round(Math.min(activeOrders, 20) * 2))
           : Math.min(28, 8 + activeOrders * 2);
 
-        // Insein is the primary shortage township — boost only when it is actually imbalanced.
-        if (agg.township === 'Insein' && imbalance) {
-          demandScore = Math.min(100, demandScore + 25);
-        }
 
         const ordersPerRider =
           supply > 0 ? Number((activeOrders / supply).toFixed(1)) : activeOrders;
@@ -255,16 +251,13 @@ async function buildHeatmap() {
         };
       })
       .sort((a, b) => {
-        const inseinBoost = (h: { township: string }) => (h.township === 'Insein' ? 1 : 0);
         if (a.imbalance !== b.imbalance) return a.imbalance ? -1 : 1;
-        if (inseinBoost(a) !== inseinBoost(b)) return inseinBoost(b) - inseinBoost(a);
-        return b.demandScore - a.demandScore;
+        return b.demandScore - a.demandScore || b.demandRatio - a.demandRatio;
       });
 
+    // Worst shortage = highest live orders per available rider.
     const topImbalance =
-      hotspots.find((h) => h.imbalance && h.township === 'Insein') ||
-      hotspots.find((h) => h.imbalance) ||
-      hotspots.find((h) => h.township === 'Insein') ||
+      [...hotspots].filter((h) => h.imbalance).sort((a, b) => b.demandRatio - a.demandRatio)[0] ||
       hotspots[0];
     let insight =
       '💡 Zones look balanced. Keep scanning — surge kicks in when orders exceed riders by 2×.';

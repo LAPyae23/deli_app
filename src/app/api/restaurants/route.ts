@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const approvedOnly = searchParams.get('approved') === '1';
 
-    const query = approvedOnly
+    const query: Record<string, unknown> = approvedOnly
       ? { approvalStatus: 'APPROVED' }
       : {};
 

@@ -365,7 +365,7 @@ export default function CartPanel({
 
   return (
     <>
-      <aside className="w-full lg:w-[22rem] xl:w-96 bg-[#f5f5f5] lg:bg-card border-t lg:border-t-0 lg:border-l border-border flex flex-col h-[calc(100vh-4rem)] lg:sticky lg:top-16 mt-4 lg:mt-0 rounded-xl lg:rounded-none overflow-hidden min-h-0">
+      <aside className="w-full bg-[#f5f5f5] lg:bg-card border-t lg:border-t-0 lg:border-l border-border flex flex-col h-[calc(100vh-4rem)] lg:sticky lg:top-16 mt-4 lg:mt-0 rounded-xl lg:rounded-none overflow-hidden min-h-0">
         {/* Header — matches shopping cart reference */}
         <div className="flex-shrink-0 bg-white border-b border-border px-3 py-3 flex items-center justify-between">
           <button

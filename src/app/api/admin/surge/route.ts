@@ -177,14 +177,14 @@ export async function GET() {
 
     if (autoSurge) {
       // Persist auto-activated multipliers for other services to read
-      config.surgeZones = liveZones.map((z) => ({
+      config.set('surgeZones', liveZones.map((z) => ({
         id: z.id,
         name: z.name,
         multiplier: z.multiplier,
         active: z.active,
         autoActivated: z.autoActivated,
         updatedAt: new Date(),
-      }));
+      })));
       await config.save();
     } else {
       // Manual mode: keep live counts but apply saved multipliers/active flags
@@ -278,14 +278,14 @@ export async function PATCH(request: Request) {
       const threshold =
         Number(config.surgeImbalanceThreshold) || DEFAULT_IMBALANCE_THRESHOLD;
       const liveZones = await computeLiveZones(threshold);
-      config.surgeZones = liveZones.map((z) => ({
+      config.set('surgeZones', liveZones.map((z) => ({
         id: z.id,
         name: z.name,
         multiplier: z.multiplier,
         active: z.active,
         autoActivated: z.autoActivated,
         updatedAt: new Date(),
-      }));
+      })));
     }
 
     await config.save();

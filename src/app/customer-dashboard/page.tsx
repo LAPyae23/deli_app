@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
 import React, { useState, useEffect } from 'react';
 import { Home, ShoppingCart, ClipboardList, LogOut, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { toast } from 'sonner';
@@ -16,7 +17,7 @@ import AddressPickerModal, { type PickedAddress } from './components/AddressPick
 import CustomerProfile from './components/CustomerProfile';
 import AIRecommendations, { type AiLane } from './components/AIRecommendations';
 import ForYou from './components/ForYou';
-import ParcelEntryCard from './components/ParcelEntryCard';
+import DiscoverHeader from './components/DiscoverHeader';
 import { useRouter } from 'next/navigation';
 import type { CartItem, DeliveryAddressInfo, OrderTotals, Restaurant } from './types';
 
@@ -181,7 +182,7 @@ function CustomerTabContent({
                 onAddToCart={addToCart}
               />
             </div>
-            <div className="hidden lg:block">{cartPanel}</div>
+            <div className="hidden shrink-0 lg:block lg:w-[22rem] xl:w-96">{cartPanel}</div>
           </div>
         );
       }
@@ -193,7 +194,7 @@ function CustomerTabContent({
               onDismiss={onClearActiveOrder}
             />
           )}
-          <ParcelEntryCard />
+          <DiscoverHeader />
           <AIRecommendations
             compactEntry
             onOpenLane={onOpenAiPicks}
@@ -210,7 +211,7 @@ function CustomerTabContent({
       return <OrderHistory onRateRestaurant={onRateRestaurant} />;
     case 'cart':
       return (
-        <div className="flex flex-col items-stretch max-w-lg mx-auto w-full min-w-0">
+        <div className="mx-auto flex w-full min-w-0 max-w-lg flex-col items-stretch lg:max-w-3xl lg:overflow-hidden lg:rounded-2xl lg:border lg:border-border lg:shadow-sm">
           {cartPanel}
         </div>
       );
@@ -585,7 +586,7 @@ export default function CustomerDashboardPage() {
         rating: Number(match.rating) > 0 ? Number(match.rating) : null,
         reviews: Number(match.reviews) || 0,
         deliveryTime: '20-35 min',
-        deliveryFee: 1500,
+        deliveryFee: DEFAULT_DELIVERY_FEE_KS,
         minOrder: 0,
         image: match.coverImage || match.logoImage || '/assets/images/no_image.png',
         imageAlt: `${match.restaurantName || restaurantName} cover photo`,

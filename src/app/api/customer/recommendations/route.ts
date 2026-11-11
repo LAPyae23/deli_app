@@ -5,6 +5,8 @@ import Order from '@/models/Order';
 import { getSession } from '@/lib/auth';
 import { getYangonWeather, isWet } from '@/lib/weather';
 import { getDishWeatherLift, getTrending, significantDishes } from '@/lib/weatherDemand';
+import { loadModel } from '@/lib/recommenderData';
+import { scoreDishes } from '@/lib/recommender';
 import { AI_PICKS_FALLBACK_ITEMS, getDishImage } from '@/lib/dishImages';
 import {
   favoriteFromOrderHistory,
@@ -53,10 +55,10 @@ function fallbackItems(tag: string, restaurants: Map<string, string>): RecItem[]
   const anyName = restaurants.values().next().value as string | undefined;
   return AI_PICKS_FALLBACK_ITEMS.filter((row) => {
     if (tag === 'rain') return row.reasonTag === 'rain' || row.category === 'Burmese';
-    if (tag === 'Sunny') return row.reasonTag === 'Sunny' || row.category === 'Drinks' || row.category === 'Dessert';
+    if (tag === 'Sunny') return row.reasonTag === 'Sunny' || (row.category as string) === 'Drinks' || (row.category as string) === 'Dessert';
     if (tag === 'trending') return row.reasonTag === 'hlaing' || row.category === 'Fast Food';
     if (tag === 'Burmese') return row.category === 'Burmese';
-    if (tag === 'Drinks') return row.category === 'Drinks' || row.category === 'Dessert';
+    if (tag === 'Drinks') return (row.category as string) === 'Drinks' || (row.category as string) === 'Dessert';
     if (tag === 'Dessert') return row.category === 'Dessert';
     if (tag === 'Fast Food') return row.category === 'Fast Food';
     return true;
@@ -76,7 +78,7 @@ function distinctByIdOrName(items: RecItem[]): RecItem[] {
   const seen = new Set<string>();
   const out: RecItem[] = [];
   for (const item of items) {
-    const key = String(item.id || item.name).toLowerCase();
+    const key = String(item.name || item.id).trim().toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(item);
@@ -162,7 +164,21 @@ export async function GET(request: Request) {
     ].filter(Boolean);
 
     let personalizedDocs: SampledMenu[] = [];
-    if (history.favoriteCategory) {
+    // Personal lane = the same hybrid recommender as "For You" (distinct dishes).
+    const model = await loadModel();
+    if (model.profiles.get(customerId)?.orderCount) {
+      const taken = new Set(
+        [weatherBased[0], trending[0]].filter(Boolean).map((i) => i.name.toLowerCase())
+      );
+      for (const d of scoreDishes(model, customerId)) {
+        if (personalizedDocs.length >= 6) break;
+        if (taken.has(d.name.toLowerCase())) continue;
+        const [doc] = await sampleMenuItems({ name: d.name }, 1);
+        if (doc) personalizedDocs.push(doc);
+      }
+    }
+    if (personalizedDocs.length < 3 && history.favoriteCategory) {
+      personalizedDocs = [];
       const ordered = new Set(history.orderedNames);
       const sampledFav = await sampleMenuItems(
         { category: history.favoriteCategory },

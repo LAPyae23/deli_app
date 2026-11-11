@@ -232,10 +232,12 @@ export default function ApprovalQueue({
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-2">
                         {item.flagged && (
-                          <TriangleAlert
-                            className="w-3.5 h-3.5 text-danger flex-shrink-0"
-                            title="Document irregularity flagged"
-                          />
+                          <span title="Document irregularity flagged" className="flex-shrink-0">
+                            <TriangleAlert
+                              className="w-3.5 h-3.5 text-danger"
+                              aria-label="Document irregularity flagged"
+                            />
+                          </span>
                         )}
                         <span className="text-sm font-semibold text-foreground">{item.name}</span>
                       </div>

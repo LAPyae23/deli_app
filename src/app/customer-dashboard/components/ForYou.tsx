@@ -195,16 +195,19 @@ function RecommendationCard({
   weights,
   coldStart,
   onOpen,
+  hiddenOnDesktop = false,
 }: {
   rec: Recommendation;
   weights: Record<ComponentKey, number>;
   coldStart: boolean;
   onOpen?: () => void;
+  /** Keep the desktop grid to two full rows. */
+  hiddenOnDesktop?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const photo = rec.item.image || getDishImage(rec.item.name);
   return (
-    <div className="w-[230px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:w-[250px]">
+    <div className={`w-[230px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:w-[250px] lg:w-auto lg:shrink ${hiddenOnDesktop ? 'lg:hidden' : ''}`}>
       <button type="button" onClick={onOpen} className="block w-full text-left">
         <div className="relative h-28 bg-muted">
           {photo ? (
@@ -314,14 +317,21 @@ export default function ForYou({
       )}
 
       {data && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
-          {data.tasteProfile && <TasteProfileCard profile={data.tasteProfile} />}
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[320px_1fr]">
+          {data.tasteProfile && (
+            <div className="xl:sticky xl:top-20">
+              <TasteProfileCard profile={data.tasteProfile} />
+            </div>
+          )}
           <div
-            className={`flex snap-x gap-3 overflow-x-auto pb-2 ${data.tasteProfile ? '' : 'xl:col-span-2'}`}
+            className={`flex snap-x gap-3 overflow-x-auto pb-2 scrollbar-hide lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:pb-0 ${
+              data.tasteProfile ? '' : 'xl:col-span-2 xl:grid-cols-4'
+            }`}
           >
-            {data.recommendations.map((rec) => (
+            {data.recommendations.map((rec, i) => (
               <RecommendationCard
                 key={`${rec.dish}-${rec.item._id}`}
+                hiddenOnDesktop={i >= 6}
                 rec={rec}
                 weights={data.weights}
                 coldStart={data.coldStart}

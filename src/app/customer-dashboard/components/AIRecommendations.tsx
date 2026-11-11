@@ -70,7 +70,7 @@ function recFromFallback(tag: string): RecItem[] {
     if (tag === 'rain') return row.reasonTag === 'rain' || row.category === 'Burmese';
     if (tag === 'Sunny') return row.reasonTag === 'Sunny';
     if (tag === 'spicy') return row.reasonTag === 'spicy';
-    if (tag === 'hlaing') return row.reasonTag === 'hlaing' || row.name === 'Shan Noodles';
+    if (tag === 'hlaing') return row.reasonTag === 'hlaing' || (row.name as string) === 'Shan Noodles';
     return true;
   }).map((row) => ({
     name: row.name,
@@ -157,9 +157,9 @@ function FeaturedCard({
     <button
       type="button"
       onClick={onClick}
-      className="w-[240px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:w-[260px]"
+      className="w-[240px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:w-[260px] lg:w-auto lg:shrink"
     >
-      <div className="relative h-32 bg-muted">
+      <div className="relative h-32 bg-muted lg:h-40">
         {photo ? (
           <AppImage
             src={photo}
@@ -209,7 +209,7 @@ type LaneDef = {
 function ItemCard({ item }: { item: RecItem }) {
   const photo = item.image || getDishImage(item.name);
   return (
-    <article className="w-[158px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:w-[172px]">
+    <article className="w-[158px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:w-[172px] lg:w-auto lg:shrink">
       <div className="relative h-24 bg-gradient-to-br from-primary/10 to-accent/10">
         {photo ? (
           <AppImage
@@ -331,21 +331,36 @@ export default function AIRecommendations({
     const featured = data.featured;
     const weatherPick = featured?.weather?.item || data.weatherBased?.items?.[0];
     const trendingPick = featured?.trending?.item || data.trending?.items?.[0];
-    const recommendedPick = featured?.recommended?.item || data.personalized?.items?.[0];
+    // Avoid showing the same dish twice across the three featured cards.
+    const usedNames = new Set(
+      [weatherPick?.name, trendingPick?.name].filter(Boolean).map((n) => String(n).toLowerCase())
+    );
+    const recommendedCandidates = [featured?.recommended?.item, ...(data.personalized?.items || [])].filter(
+      Boolean
+    ) as RecItem[];
+    const recommendedPick =
+      recommendedCandidates.find((i) => !usedNames.has(i.name.toLowerCase())) || recommendedCandidates[0];
     const weatherLabel = featured?.weather?.weather || weatherData;
 
     return (
       <div className="mb-5 animate-fade-in">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-customer" />
-            <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        <div className="mb-3 flex items-end justify-between gap-2">
+          <div>
+            <h2 className="flex items-center gap-1.5 text-base font-bold text-foreground">
+              <Sparkles className="h-4 w-4 text-customer" />
               AI Picks
             </h2>
+            <p className="text-xs text-muted-foreground">Matched to the weather, what&apos;s trending and your taste</p>
           </div>
-          <p className="text-[11px] text-muted-foreground">Recommend · Weather · Trending</p>
+          <button
+            type="button"
+            onClick={() => onOpenLane?.('recommended')}
+            className="shrink-0 text-xs font-semibold text-customer hover:underline"
+          >
+            See all
+          </button>
         </div>
-        <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 scrollbar-hide snap-x snap-mandatory">
+        <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 scrollbar-hide snap-x snap-mandatory lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:px-0">
           <FeaturedCard
             title="Perfect Weather Match"
             reason={
@@ -433,7 +448,7 @@ export default function AIRecommendations({
               No picks in this lane yet.
             </div>
           ) : (
-            <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 scrollbar-hide snap-x snap-mandatory">
+            <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 scrollbar-hide snap-x snap-mandatory lg:mx-0 lg:grid lg:grid-cols-4 lg:overflow-visible lg:px-0 xl:grid-cols-6">
               {activeLane.items.map((item, index) => (
                 <ItemCard key={`${activeLane.key}-${item.name}-${index}`} item={item} />
               ))}

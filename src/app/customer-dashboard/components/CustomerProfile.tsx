@@ -203,15 +203,15 @@ export default function CustomerProfile({
   const displayName = [form.firstName, form.lastName].filter(Boolean).join(' ') || 'Your name';
 
   return (
-    <div className="mx-auto max-w-xl space-y-5 animate-fade-in">
-      <div>
+    <div className="mx-auto max-w-xl space-y-5 animate-fade-in xl:grid xl:max-w-5xl xl:grid-cols-[1fr_340px] xl:items-start xl:gap-6 xl:space-y-0">
+      <div className="xl:col-span-2">
         <h2 className="text-lg font-bold tracking-tight text-foreground sm:text-xl">My Profile</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Update your photo, personal details, and delivery addresses.
         </p>
       </div>
 
-      <form onSubmit={handleSave} className="space-y-5">
+      <form onSubmit={handleSave} className="space-y-5 xl:row-span-2">
         <div className="space-y-4 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
           <div className="flex flex-col items-center gap-3 border-b border-border pb-5 sm:flex-row sm:items-center sm:gap-4">
             <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-full border-2 border-border bg-muted">

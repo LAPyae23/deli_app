@@ -37,7 +37,7 @@ export async function GET(request: Request) {
           'customerId customerName distanceKm durationMins customerOrderCount createdAt items.name status'
         )
         .limit(MAX_ORDERS)
-        .lean()) as AnalyticsOrder[];
+        .lean()) as unknown as AnalyticsOrder[];
 
       const regression = computeRegression(orders);
       const baskets = computeMarketBasket(orders, 5);

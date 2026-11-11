@@ -312,7 +312,7 @@ export async function PATCH(
 
     const wasDelivered = String(existingOrder.status || '').toUpperCase() === 'DELIVERED';
     const becomingDelivered = nextStatus === 'DELIVERED' && !wasDelivered;
-    const pricing = pricingFromOrder(existingOrder);
+    const pricing = pricingFromOrder(existingOrder as unknown as Parameters<typeof pricingFromOrder>[0]);
 
     if (becomingDelivered) {
       updateData.completedAt = new Date();
