@@ -245,11 +245,14 @@ export default function AIRecommendations({
   compactEntry = false,
   onOpenLane,
   weather,
+  township,
 }: {
   initialLane?: AiLane;
   compactEntry?: boolean;
   onOpenLane?: (lane: AiLane) => void;
   weather?: string;
+  /** Township of the delivery address in use — "Trending" is computed for it. */
+  township?: string;
 }) {
   const [data, setData] = useState<RecommendationsPayload>(() =>
     demoPayload(weather || 'Rainy')
@@ -269,6 +272,7 @@ export default function AIRecommendations({
         const params = new URLSearchParams();
         if (customerId) params.set('customerId', customerId);
         if (weather) params.set('weather', weather);
+        if (township) params.set('township', township);
         const res = await fetch(`/api/customer/recommendations?${params.toString()}`);
         const json = (await res.json()) as RecommendationsPayload;
         if (!res.ok || !json.success) return;
@@ -282,7 +286,7 @@ export default function AIRecommendations({
     return () => {
       cancelled = true;
     };
-  }, [weather]);
+  }, [weather, township]);
 
   const weatherData = data.weatherBased?.weather || data.weather || 'Sunny';
 

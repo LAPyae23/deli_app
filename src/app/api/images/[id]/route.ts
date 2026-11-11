@@ -3,8 +3,8 @@ import dbConnect from '@/lib/mongodb';
 import StoredImage from '@/models/StoredImage';
 
 /** GET /api/images/[id] — serve an uploaded image (public, cached for a year). */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> | { id: string } }) {
-  const { id } = await Promise.resolve(params);
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   if (!mongoose.Types.ObjectId.isValid(id)) return new Response('Not found', { status: 404 });
   await dbConnect();
   // Not lean(): a hydrated document gives a real Node Buffer for `data`.

@@ -141,7 +141,12 @@ export async function GET(request: Request) {
           .select('deliveryAddress.township totals.township')
           .lean<{ deliveryAddress?: { township?: string }; totals?: { township?: string } }>()
       : null;
-    const township = String(lastOrder?.deliveryAddress?.township || lastOrder?.totals?.township || '').trim() || null;
+    // Prefer the township of the address the customer is ordering to now.
+    const requestedTownship = String(searchParams.get('township') || '').trim().slice(0, 40);
+    const township =
+      requestedTownship ||
+      String(lastOrder?.deliveryAddress?.township || lastOrder?.totals?.township || '').trim() ||
+      null;
     const trend = await getTrending(township);
     const trendDocs: SampledMenu[] = [];
     for (const t of trend.dishes.slice(0, 6)) {

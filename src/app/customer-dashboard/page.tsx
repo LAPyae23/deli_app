@@ -198,6 +198,7 @@ function CustomerTabContent({
           <AIRecommendations
             compactEntry
             onOpenLane={onOpenAiPicks}
+            township={townshipFromAddress(deliveryAddress?.address)}
           />
           <ForYou onSelectRestaurant={onSelectRestaurant} />
           <RestaurantGrid
@@ -241,6 +242,12 @@ function CustomerTabContent({
     default:
       return null;
   }
+}
+
+/** "96815 Virginia Station, Hlaing Township" → "Hlaing" (used for "Trending in …"). */
+function townshipFromAddress(address?: string) {
+  const m = String(address || '').match(/([A-Za-z][A-Za-z ]*?)\s+Township/i);
+  return m ? m[1].trim().split(/,\s*/).pop()?.trim() : undefined;
 }
 
 export default function CustomerDashboardPage() {
