@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import { useEffect, useState } from 'react';
 import { BellRing, X } from 'lucide-react';
 
@@ -29,6 +30,7 @@ async function subscribe() {
  */
 export default function PushOptIn({ message, className = '' }: { message: string; className?: string }) {
   const [state, setState] = useState<'hidden' | 'ask' | 'busy'>('hidden');
+  const { t } = useT();
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
@@ -64,7 +66,7 @@ export default function PushOptIn({ message, className = '' }: { message: string
         }}
         className="shrink-0 rounded-xl bg-customer px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
       >
-        Turn on
+        {t('push.on')}
       </button>
       <button
         type="button"

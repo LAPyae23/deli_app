@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import React, { useEffect, useState } from 'react';
 import { Sparkles, ChevronDown, Clock, Store, Wallet, Receipt, UtensilsCrossed } from 'lucide-react';
 import AppImage from '@/components/ui/AppImage';
@@ -48,13 +49,13 @@ type ForYouPayload = {
   model: { orders: number; customers: number; dishes: number };
 };
 
-const SIGNAL_LABELS: Record<ComponentKey, string> = {
-  collaborative: 'Similar customers',
-  category: 'Your favourite category',
-  repeat: 'You order it often',
-  popularity: 'Popular right now',
-  price: 'Fits your budget',
-};
+const SIGNAL_KEYS = {
+  collaborative: 'signal.collaborative',
+  category: 'signal.category',
+  repeat: 'signal.repeat',
+  popularity: 'signal.popularity',
+  price: 'signal.price',
+} as const;
 
 /** Fixed category → color mapping (validated categorical slots 1–4, light/dark). */
 const CATEGORY_COLORS: Record<string, string> = {
@@ -75,12 +76,13 @@ function timeOfDay(hour: number) {
 }
 
 function TasteProfileCard({ profile }: { profile: TasteProfile }) {
+  const { t } = useT();
   return (
     <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="mb-3 flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-bold text-foreground">Your taste profile</h3>
+        <h3 className="text-sm font-bold text-foreground">{t('foryou.taste')}</h3>
         <span className="text-[11px] text-muted-foreground">
-          From your {profile.orderCount} orders
+          {t('foryou.fromOrders', { n: profile.orderCount })}
         </span>
       </div>
 
@@ -118,21 +120,21 @@ function TasteProfileCard({ profile }: { profile: TasteProfile }) {
         <div className="flex items-start gap-2">
           <Receipt className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
           <div>
-            <dt className="text-muted-foreground">Average order</dt>
+            <dt className="text-muted-foreground">{t('foryou.avgOrder')}</dt>
             <dd className="font-bold text-foreground font-tabular">{formatMMK(profile.avgOrderValue)}</dd>
           </div>
         </div>
         <div className="flex items-start gap-2">
           <Wallet className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
           <div>
-            <dt className="text-muted-foreground">Usual dish price</dt>
+            <dt className="text-muted-foreground">{t('foryou.usualPrice')}</dt>
             <dd className="font-bold text-foreground font-tabular">{formatMMK(profile.avgItemPrice)}</dd>
           </div>
         </div>
         <div className="flex items-start gap-2">
           <Clock className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
           <div>
-            <dt className="text-muted-foreground">You usually order</dt>
+            <dt className="text-muted-foreground">{t('foryou.usualTime')}</dt>
             <dd className="font-bold text-foreground">{timeOfDay(profile.favoriteHour)}</dd>
           </div>
         </div>
@@ -140,7 +142,7 @@ function TasteProfileCard({ profile }: { profile: TasteProfile }) {
           <div className="flex items-start gap-2">
             <Store className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
             <div className="min-w-0">
-              <dt className="text-muted-foreground">Favourite restaurant</dt>
+              <dt className="text-muted-foreground">{t('foryou.favRestaurant')}</dt>
               <dd className="truncate font-bold text-foreground">{profile.topRestaurant.name}</dd>
             </div>
           </div>
@@ -149,7 +151,7 @@ function TasteProfileCard({ profile }: { profile: TasteProfile }) {
 
       {profile.topDishes.length > 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
-          Most ordered:{' '}
+          {t('foryou.mostOrdered')}:{' '}
           {profile.topDishes.map((d, i) => (
             <span key={d.name} className="text-foreground">
               {i > 0 && ', '}
@@ -163,7 +165,8 @@ function TasteProfileCard({ profile }: { profile: TasteProfile }) {
 }
 
 function WhyBreakdown({ rec, weights }: { rec: Recommendation; weights: Record<ComponentKey, number> }) {
-  const keys = (Object.keys(SIGNAL_LABELS) as ComponentKey[]).filter((k) => weights[k] > 0);
+  const { t } = useT();
+  const keys = (Object.keys(SIGNAL_KEYS) as ComponentKey[]).filter((k) => weights[k] > 0);
   const total = keys.reduce((s, k) => s + rec.contributions[k], 0) || 1;
   return (
     <div className="mt-2 space-y-1.5 border-t border-border pt-2">
@@ -172,9 +175,9 @@ function WhyBreakdown({ rec, weights }: { rec: Recommendation; weights: Record<C
         .map((k) => {
           const share = rec.contributions[k] / total;
           return (
-            <div key={k} title={`${SIGNAL_LABELS[k]}: signal ${Math.round(rec.components[k] * 100)}% × weight ${Math.round(weights[k] * 100)}%`}>
+            <div key={k} title={`${t(SIGNAL_KEYS[k])}: signal ${Math.round(rec.components[k] * 100)}% × weight ${Math.round(weights[k] * 100)}%`}>
               <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>{SIGNAL_LABELS[k]}</span>
+                <span>{t(SIGNAL_KEYS[k])}</span>
                 <span className="font-tabular text-foreground">{Math.round(share * 100)}%</span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-muted">
@@ -205,6 +208,7 @@ function RecommendationCard({
   hiddenOnDesktop?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const { t } = useT();
   const photo = rec.item.image || getDishImage(rec.item.name);
   return (
     <div className={`w-[230px] shrink-0 snap-start overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:w-[250px] lg:w-auto lg:shrink ${hiddenOnDesktop ? 'lg:hidden' : ''}`}>
@@ -225,7 +229,7 @@ function RecommendationCard({
             </div>
           )}
           <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-bold text-white font-tabular">
-            {coldStart ? 'Popular' : `${Math.round(rec.score * 100)}% match`}
+            {coldStart ? t('foryou.popular') : t('foryou.match', { p: Math.round(rec.score * 100) })}
           </span>
         </div>
         <div className="space-y-1 px-3 pt-3">
@@ -248,7 +252,7 @@ function RecommendationCard({
           aria-expanded={open}
           className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
         >
-          Why this?
+          {t('foryou.why')}
           <ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
         {open &&
@@ -271,6 +275,7 @@ export default function ForYou({
 }) {
   const [data, setData] = useState<ForYouPayload | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const { t } = useT();
 
   useEffect(() => {
     let cancelled = false;
@@ -296,14 +301,14 @@ export default function ForYou({
         <div>
           <h2 id="for-you-heading" className="flex items-center gap-1.5 text-base font-bold text-foreground">
             <Sparkles className="h-4 w-4 text-customer" aria-hidden />
-            For You
+            {t('foryou.title')}
           </h2>
           <p className="text-xs text-muted-foreground">
             {data
               ? data.coldStart
-                ? 'Order a few times and these picks will learn your taste. For now: most popular dishes.'
-                : `Learned from your orders and ${data.model.orders.toLocaleString()} orders by ${data.model.customers.toLocaleString()} customers`
-              : 'Analysing your orders…'}
+                ? t('foryou.cold')
+                : t('foryou.learned', { n: data.model.orders.toLocaleString(), c: data.model.customers.toLocaleString() })
+              : t('foryou.loading')}
           </p>
         </div>
       </div>

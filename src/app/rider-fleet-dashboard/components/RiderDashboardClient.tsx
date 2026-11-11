@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+import LanguageToggle from '@/components/LanguageToggle';
 import RiderParcels from './RiderParcels';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
@@ -315,6 +317,7 @@ export default function RiderDashboardClient() {
     (DispatchOrder & { deliveryStatus: 'ACCEPTED' | 'PICKED_UP' })[]
   >([]);
   const [activeTab, setActiveTab] = useState<RiderTab>('home');
+  const { t } = useT();
   const [riderPos, setRiderPos] = useState(INITIAL_RIDER_POS);
   /** Last real GPS fix (null until the device reports one). */
   const riderPosRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -962,6 +965,8 @@ export default function RiderDashboardClient() {
   const dutyLabel =
     dutyStatus === 'OFFLINE' ? 'Go Online' : dutyStatus === 'AVAILABLE' ? 'Online' : 'Delivering';
 
+  const navLabel = (id: RiderTab) => t(`rider.${id}` as const);
+
   const renderNavButtons = (variant: 'sidebar' | 'bottom') => (
     <>
       {NAV_ITEMS.map((item) => {
@@ -979,7 +984,7 @@ export default function RiderDashboardClient() {
               }`}
             >
               <item.icon className="h-[18px] w-[18px]" />
-              {item.label}
+              {navLabel(item.id)}
             </button>
           );
         }
@@ -994,17 +999,18 @@ export default function RiderDashboardClient() {
           >
             {isActive && <span className="absolute inset-0 rounded-xl bg-rider/10" />}
             <item.icon className={`relative z-10 h-[18px] w-[18px] ${isActive ? 'scale-105' : ''} transition-transform`} />
-            <span className="relative z-10 text-[10px] font-semibold">{item.label}</span>
+            <span className="relative z-10 text-[10px] font-semibold">{navLabel(item.id)}</span>
           </button>
         );
       })}
+      {variant === 'sidebar' && <LanguageToggle className="mt-auto rounded-xl px-3.5" />}
       {variant === 'sidebar' ? (
         <a
           href="/api/auth/logout"
-          className="mt-auto flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-500 transition-all duration-150 hover:bg-slate-100 hover:text-slate-800"
+          className="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-500 transition-all duration-150 hover:bg-slate-100 hover:text-slate-800"
         >
           <LogOut className="h-[18px] w-[18px]" />
-          Sign Out
+          {t('nav.signOut')}
         </a>
       ) : (
         <a
@@ -1012,7 +1018,7 @@ export default function RiderDashboardClient() {
           className="flex flex-1 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-slate-400 transition-all duration-200 hover:text-slate-600"
         >
           <LogOut className="h-[18px] w-[18px]" />
-          <span className="text-[10px] font-semibold">Sign Out</span>
+          <span className="text-[10px] font-semibold">{t('nav.signOut')}</span>
         </a>
       )}
     </>
@@ -1745,6 +1751,9 @@ export default function RiderDashboardClient() {
             {activeTab === 'settings' && (
               <div className="mx-auto max-w-xl space-y-4 animate-fade-in lg:max-w-2xl">
                 <SectionLabel>Account Settings</SectionLabel>
+                <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+                  <LanguageToggle />
+                </div>
 
                 {profileLoading ? (
                   <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white py-16 text-slate-500">

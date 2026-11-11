@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import PushOptIn from '@/components/PushOptIn';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
@@ -124,6 +125,7 @@ function PlaceField({
   onChange: (p: Place) => void;
   saved: Array<{ label: string; address: string; lat?: number; lng?: number }>;
 }) {
+  const { t } = useT();
   const [query, setQuery] = useState(value.address);
   const [results, setResults] = useState<Suggestion[]>([]);
   const [searching, setSearching] = useState(false);
@@ -173,7 +175,7 @@ function PlaceField({
             setQuery(e.target.value);
             onChange({ ...value, address: e.target.value, lat: null, lng: null });
           }}
-          placeholder="Type an address, street or place"
+          placeholder={t('parcel.search')}
           className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-9 text-sm text-foreground outline-none focus:border-customer"
         />
         {searching && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
@@ -213,11 +215,11 @@ function PlaceField({
           className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[11px] font-semibold text-foreground hover:bg-muted"
         >
           <MapPin className="h-3 w-3" />
-          {showMap ? 'Hide map' : 'Pin on map'}
+          {showMap ? t('parcel.hideMap') : t('parcel.pin')}
         </button>
         {value.lat != null && (
           <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600">
-            <CheckCircle2 className="h-3 w-3" /> Location set
+            <CheckCircle2 className="h-3 w-3" /> {t('parcel.locationSet')}
           </span>
         )}
       </div>
@@ -237,7 +239,7 @@ function PlaceField({
       <input
         value={value.detail}
         onChange={(e) => onChange({ ...value, detail: e.target.value })}
-        placeholder="Building, floor, room or landmark (optional)"
+        placeholder={t('parcel.detail')}
         className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground outline-none focus:border-customer"
       />
     </div>
@@ -253,6 +255,7 @@ function ParcelCard({
   incoming: boolean;
   onCancel: (id: string) => void;
 }) {
+  const { t } = useT();
   const active = parcel.status === 'ACCEPTED' || parcel.status === 'PICKED_UP';
   const stepIndex = STEPS.indexOf(parcel.status);
   const rider =
@@ -274,7 +277,7 @@ function ParcelCard({
         {parcel.deliveryPin && parcel.status !== 'DELIVERED' && parcel.status !== 'CANCELLED' && (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-center dark:border-emerald-900 dark:bg-emerald-950/40">
             <p className="flex items-center gap-1 text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
-              <ShieldCheck className="h-3 w-3" /> Delivery PIN
+              <ShieldCheck className="h-3 w-3" /> {t('parcel.pinLabel')}
             </p>
             <p className="text-lg font-bold tracking-[0.3em] text-emerald-800 font-tabular dark:text-emerald-300">
               {parcel.deliveryPin}
@@ -336,7 +339,7 @@ function ParcelCard({
           onClick={() => onCancel(parcel._id)}
           className="inline-flex items-center gap-1 text-xs font-semibold text-danger"
         >
-          <X className="h-3.5 w-3.5" /> Cancel request
+          <X className="h-3.5 w-3.5" /> {t('parcel.cancel')}
         </button>
       )}
     </article>
@@ -345,6 +348,7 @@ function ParcelCard({
 
 export default function ParcelsClient() {
   const router = useRouter();
+  const { t } = useT();
   const [pickup, setPickup] = useState<Place>(EMPTY);
   const [dropoff, setDropoff] = useState<Place>(EMPTY);
   const [recipientName, setRecipientName] = useState('');
@@ -478,25 +482,25 @@ export default function ParcelsClient() {
           </button>
           <div>
             <p className="flex items-center gap-1.5 text-sm font-bold text-foreground">
-              <Package className="h-4 w-4 text-customer" /> FoodDash Express
+              <Package className="h-4 w-4 text-customer" /> {t('parcel.brand')}
             </p>
-            <p className="text-[11px] text-muted-foreground">Send anything across Yangon — a rider picks it up from your door</p>
+            <p className="text-[11px] text-muted-foreground">{t('parcel.brandSub')}</p>
           </div>
         </div>
       </header>
 
       <main className="mx-auto grid max-w-5xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_380px]">
         <section className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <h1 className="text-lg font-bold text-foreground">Send a parcel</h1>
+          <h1 className="text-lg font-bold text-foreground">{t('parcel.title')}</h1>
           <PlaceField
-            label="Pickup"
+            label={t('parcel.pickup')}
             icon={<Navigation className="h-3.5 w-3.5 text-customer" />}
             value={pickup}
             onChange={setPickup}
             saved={saved}
           />
           <PlaceField
-            label="Drop-off"
+            label={t('parcel.dropoff')}
             icon={<MapPin className="h-3.5 w-3.5 text-danger" />}
             value={dropoff}
             onChange={setDropoff}
@@ -507,23 +511,23 @@ export default function ParcelsClient() {
             <input
               value={recipientName}
               onChange={(e) => setRecipientName(e.target.value)}
-              placeholder="Recipient name"
+              placeholder={t('parcel.recipientName')}
               className="rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-customer"
             />
             <input
               value={recipientPhone}
               onChange={(e) => setRecipientPhone(e.target.value)}
-              placeholder="Recipient phone (09…)"
+              placeholder={t('parcel.recipientPhone')}
               inputMode="tel"
               className="rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-customer"
             />
           </div>
           <p className="-mt-2 text-[11px] text-muted-foreground">
-            If the recipient uses FoodDash with this phone number, they can track the parcel in their app too.
+            {t('parcel.recipientHint')}
           </p>
 
           <div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Size</p>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t('parcel.size')}</p>
             <div className="grid gap-2 sm:grid-cols-3">
               {SIZES.map((s) => (
                 <button
@@ -546,19 +550,19 @@ export default function ParcelsClient() {
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What are you sending? (e.g. documents, clothes)"
+            placeholder={t('parcel.what')}
             className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-customer"
           />
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Note for the rider (optional)"
+            placeholder={t('parcel.note')}
             rows={2}
             className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-customer"
           />
 
           <div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Who pays the rider (cash)?</p>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t('parcel.whoPays')}</p>
             <div className="inline-flex rounded-full border border-border bg-muted/40 p-0.5">
               {(['SENDER', 'RECIPIENT'] as const).map((p) => (
                 <button
@@ -567,7 +571,7 @@ export default function ParcelsClient() {
                   onClick={() => setPayer(p)}
                   className={`rounded-full px-3 py-1.5 text-xs font-bold ${payer === p ? 'bg-customer text-white' : 'text-muted-foreground'}`}
                 >
-                  {p === 'SENDER' ? 'I pay at pickup' : 'Recipient pays at drop-off'}
+                  {p === 'SENDER' ? t('parcel.iPay') : t('parcel.recipientPays')}
                 </button>
               ))}
             </div>
@@ -575,17 +579,17 @@ export default function ParcelsClient() {
 
           <div className="rounded-xl border border-border bg-muted/40 p-4">
             {!ready ? (
-              <p className="text-sm text-muted-foreground">Choose pickup and drop-off to see the price.</p>
+              <p className="text-sm text-muted-foreground">{t('parcel.choose')}</p>
             ) : quoteError ? (
               <p className="text-sm text-danger">{quoteError}</p>
             ) : quote ? (
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between text-muted-foreground">
-                  <span>Base fare</span>
+                  <span>{t('parcel.base')}</span>
                   <span className="font-tabular">{formatMMK(quote.baseFee)}</span>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
-                  <span>Distance ({quote.roadKm} km by road)</span>
+                  <span>{t('parcel.distance', { km: quote.roadKm })}</span>
                   <span className="font-tabular">{formatMMK(quote.distanceFee)}</span>
                 </div>
                 {quote.sizeFee > 0 && (
@@ -595,10 +599,10 @@ export default function ParcelsClient() {
                   </div>
                 )}
                 <div className="flex justify-between border-t border-border pt-1 font-bold text-foreground">
-                  <span>Total</span>
+                  <span>{t('parcel.total')}</span>
                   <span className="font-tabular">{formatMMK(quote.total)}</span>
                 </div>
-                <p className="text-[11px] text-muted-foreground">About {quote.etaMins} min ride once picked up.</p>
+                <p className="text-[11px] text-muted-foreground">{t('parcel.ride', { m: quote.etaMins })}</p>
               </div>
             ) : (
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -612,25 +616,25 @@ export default function ParcelsClient() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-customer py-3 text-sm font-bold text-white disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bike className="h-4 w-4" />}
-            Request a rider{quote && !quoteError ? ` · ${formatMMK(quote.total)}` : ''}
+            {t('parcel.request')}{quote && !quoteError ? ` · ${formatMMK(quote.total)}` : ''}
           </button>
         </section>
 
         <aside className="space-y-3">
-          <PushOptIn message="Get notified when a rider accepts and delivers your parcel." />
+          <PushOptIn message={t('push.customer')} />
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-foreground">My parcels</h2>
+            <h2 className="text-sm font-bold text-foreground">{t('parcel.mine')}</h2>
             {activeCount > 0 && <span className="text-[11px] text-muted-foreground">{activeCount} in progress</span>}
           </div>
           <div className="inline-flex rounded-full border border-border bg-muted/40 p-0.5">
-            {(['sent', 'incoming'] as const).map((t) => (
+            {(['sent', 'incoming'] as const).map((tabKey) => (
               <button
-                key={t}
+                key={tabKey}
                 type="button"
-                onClick={() => setTab(t)}
-                className={`rounded-full px-3 py-1.5 text-xs font-bold ${tab === t ? 'bg-customer text-white' : 'text-muted-foreground'}`}
+                onClick={() => setTab(tabKey)}
+                className={`rounded-full px-3 py-1.5 text-xs font-bold ${tab === tabKey ? 'bg-customer text-white' : 'text-muted-foreground'}`}
               >
-                {t === 'sent' ? `Sent (${sent.length})` : `To me (${incoming.length})`}
+                {tabKey === 'sent' ? t('parcel.sent', { n: sent.length }) : t('parcel.toMe', { n: incoming.length })}
               </button>
             ))}
           </div>

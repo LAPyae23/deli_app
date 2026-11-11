@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import { DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Star, Clock, Bike, Loader2, Store, MapPin } from 'lucide-react';
@@ -126,6 +127,7 @@ export default function RestaurantGrid({
   searchQuery,
 }: RestaurantGridProps) {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const { t } = useT();
   const [maxRadiusKm, setMaxRadiusKm] = useState(DEFAULT_RADIUS_KM);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -225,14 +227,14 @@ export default function RestaurantGrid({
   return (
     <section>
       <div className="mb-5">
-        <h2 className="text-lg font-bold text-foreground">Restaurants Near You</h2>
+        <h2 className="text-lg font-bold text-foreground">{t('rest.title')}</h2>
         <p className="text-sm text-muted-foreground">
           {nearbyRestaurants.length > 0 && (
             <span className="font-semibold text-foreground">
-              {nearbyRestaurants.filter(canSelectRestaurant).length} open now ·{' '}
+              {t('rest.openNow', { n: nearbyRestaurants.filter(canSelectRestaurant).length })} ·{' '}
             </span>
           )}
-          Within {maxRadiusKm} km of your delivery address
+          {t('rest.within', { km: maxRadiusKm })}
           {deliveryAddress?.address ? ` · ${deliveryAddress.address}` : ''}
         </p>
       </div>

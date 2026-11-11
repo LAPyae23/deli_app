@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+import LanguageToggle from '@/components/LanguageToggle';
 import PushOptIn from '@/components/PushOptIn';
 import { DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
 import React, { useState, useEffect } from 'react';
@@ -196,7 +198,7 @@ function CustomerTabContent({
             />
           )}
           <DiscoverHeader />
-          <PushOptIn message="Get a notification when your order or parcel moves." className="mb-6" />
+          <PushOptInT />
           <AIRecommendations
             compactEntry
             onOpenLane={onOpenAiPicks}
@@ -252,10 +254,16 @@ function townshipFromAddress(address?: string) {
   return m ? m[1].trim().split(/,\s*/).pop()?.trim() : undefined;
 }
 
+function PushOptInT() {
+  const { t } = useT();
+  return <PushOptIn message={t('push.customer')} className="mb-6" />;
+}
+
 export default function CustomerDashboardPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<CustomerTab>('discover');
   const [collapsed, setCollapsed] = useState(false);
+  const { t } = useT();
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartHydrated, setCartHydrated] = useState(false);
@@ -550,16 +558,16 @@ export default function CustomerDashboardPage() {
     label: string;
     badge: string | null;
   }[] = [
-    { key: 'nav-home', tab: 'discover', icon: Home, label: 'Discover', badge: null },
-    { key: 'nav-orders', tab: 'orders', icon: ClipboardList, label: 'My Orders', badge: null },
+    { key: 'nav-home', tab: 'discover', icon: Home, label: t('nav.discover'), badge: null },
+    { key: 'nav-orders', tab: 'orders', icon: ClipboardList, label: t('nav.orders'), badge: null },
     {
       key: 'nav-cart',
       tab: 'cart',
       icon: ShoppingCart,
-      label: 'Cart',
+      label: t('nav.cart'),
       badge: cartCount > 0 ? String(cartCount) : null,
     },
-    { key: 'nav-profile', tab: 'profile', icon: User, label: 'Profile', badge: null },
+    { key: 'nav-profile', tab: 'profile', icon: User, label: t('nav.profile'), badge: null },
   ];
 
   const handleTabChange = (tab: CustomerTab) => {
@@ -642,7 +650,7 @@ export default function CustomerDashboardPage() {
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto scrollbar-hide">
-          {!collapsed && <p className="section-label px-3 mb-2 mt-1">Menu</p>}
+          {!collapsed && <p className="section-label px-3 mb-2 mt-1">{t('nav.menu')}</p>}
           {navItems.map((item) => {
             const isActive = activeTab === item.tab && !showOrderConfirmation;
             return (
@@ -672,15 +680,16 @@ export default function CustomerDashboardPage() {
 
         <div className="p-3 border-t border-border space-y-1">
           <ThemeToggle collapsed={collapsed} showLabel />
+          <LanguageToggle collapsed={collapsed} />
           <a
             href="/api/auth/logout"
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium nav-item ${
               collapsed ? 'justify-center px-0' : ''
             }`}
-            title={collapsed ? 'Sign Out' : undefined}
+            title={collapsed ? t('nav.signOut') : undefined}
           >
             <LogOut className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>Sign Out</span>}
+            {!collapsed && <span>{t('nav.signOut')}</span>}
           </a>
         </div>
       </aside>

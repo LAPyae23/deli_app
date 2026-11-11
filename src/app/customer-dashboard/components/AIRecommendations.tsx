@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CloudRain,
@@ -258,6 +259,7 @@ export default function AIRecommendations({
     demoPayload(weather || 'Rainy')
   );
   const [active, setActive] = useState<AiLane>(initialLane);
+  const { t } = useT();
 
   useEffect(() => {
     setActive(initialLane);
@@ -352,21 +354,21 @@ export default function AIRecommendations({
           <div>
             <h2 className="flex items-center gap-1.5 text-base font-bold text-foreground">
               <Sparkles className="h-4 w-4 text-customer" />
-              AI Picks
+              {t('ai.title')}
             </h2>
-            <p className="text-xs text-muted-foreground">Matched to the weather, what&apos;s trending and your taste</p>
+            <p className="text-xs text-muted-foreground">{t('ai.sub')}</p>
           </div>
           <button
             type="button"
             onClick={() => onOpenLane?.('recommended')}
             className="shrink-0 text-xs font-semibold text-customer hover:underline"
           >
-            See all
+            {t('ai.seeAll')}
           </button>
         </div>
         <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 scrollbar-hide snap-x snap-mandatory lg:mx-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:overflow-visible lg:px-0">
           <FeaturedCard
-            title="Perfect Weather Match"
+            title={t('ai.weather')}
             reason={
               featured?.weather?.reason ||
               (weatherLabel === 'Sunny'
@@ -388,7 +390,7 @@ export default function AIRecommendations({
             onClick={() => onOpenLane?.('trending')}
           />
           <FeaturedCard
-            title="Recommended for You"
+            title={t('ai.recommended')}
             reason={
               featured?.recommended?.reason || 'Picked from the menu for you'
             }
