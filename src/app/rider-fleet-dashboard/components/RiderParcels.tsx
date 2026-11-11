@@ -1,5 +1,6 @@
 'use client';
 
+import PushOptIn from '@/components/PushOptIn';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CheckCircle2, Loader2, MapPin, Navigation, Package, Phone } from 'lucide-react';
@@ -128,6 +129,8 @@ export default function RiderParcels({ online }: { online: boolean }) {
         <h2 className="text-lg font-bold text-slate-900">Parcels</h2>
         <span className="text-xs text-slate-500">Door-to-door deliveries from customers</span>
       </div>
+
+      <PushOptIn message="Get alerts for new deliveries and parcels near you." />
 
       {active.length > 0 && (
         <div className="space-y-3">

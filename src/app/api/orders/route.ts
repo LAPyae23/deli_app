@@ -12,6 +12,7 @@ import {
 import { resolveOrderLines } from '@/lib/orderLines';
 import { haversineKm, toLatLng, travelMinutes, type LatLng } from '@/lib/geo';
 import { getYangonWeather } from '@/lib/weather';
+import { sendPush } from '@/lib/push';
 
 const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
 
@@ -477,6 +478,13 @@ export async function POST(request: Request) {
         console.warn(`Stock deduction failed for menu item ${menuItemId}:`, stockError);
       }
     }
+
+    await sendPush([restaurantId], {
+      title: `New order ${newOrder.orderNumber}`,
+      body: `${items.reduce((n, i) => n + i.quantity, 0)} item(s) · ${customerTotal.toLocaleString()} Ks`,
+      url: '/restaurant-vendor-portal',
+      tag: `new-order-${newOrder.orderNumber}`,
+    });
 
     return NextResponse.json({
       success: true,

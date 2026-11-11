@@ -1,5 +1,6 @@
 'use client';
 
+import PushOptIn from '@/components/PushOptIn';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, Check, X, ChevronDown, AlertCircle, Bell, MessageCircle, Bike, User } from 'lucide-react';
 import { toast } from 'sonner';
@@ -295,6 +296,7 @@ export default function OrderQueue() {
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden card-shadow h-full flex flex-col">
       <div className="flex-shrink-0 space-y-3 border-b border-border px-5 py-4">
+        <PushOptIn message="Get a notification the moment a new order arrives." />
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <h2 className="font-bold text-base">

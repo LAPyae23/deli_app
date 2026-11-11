@@ -1,5 +1,6 @@
 'use client';
 
+import PushOptIn from '@/components/PushOptIn';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -616,6 +617,7 @@ export default function ParcelsClient() {
         </section>
 
         <aside className="space-y-3">
+          <PushOptIn message="Get notified when a rider accepts and delivers your parcel." />
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-foreground">My parcels</h2>
             {activeCount > 0 && <span className="text-[11px] text-muted-foreground">{activeCount} in progress</span>}

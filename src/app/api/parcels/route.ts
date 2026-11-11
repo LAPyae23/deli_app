@@ -15,6 +15,7 @@ import {
   type ParcelDoc,
 } from '@/lib/parcels';
 import { isRiderBlocked } from '@/lib/riderWallet';
+import { notifyNearestRiders } from '@/lib/notify';
 
 const clean = (v: unknown, max = 200) => String(v ?? '').trim().slice(0, max);
 
@@ -171,5 +172,11 @@ export async function POST(request: Request) {
   if (!parcel) {
     return NextResponse.json({ success: false, message: 'Could not create parcel, try again' }, { status: 500 });
   }
+  await notifyNearestRiders(pickupAt, {
+    title: 'New parcel near you',
+    body: `${quote.roadKm} km trip · earn ${quote.riderEarning.toLocaleString()} Ks`,
+    url: '/rider-fleet-dashboard',
+    tag: `parcel-${parcel.code}`,
+  });
   return NextResponse.json({ success: true, parcel: viewFor(session, parcel.toObject() as ParcelDoc) });
 }

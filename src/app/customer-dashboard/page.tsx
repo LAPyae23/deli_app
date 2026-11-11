@@ -1,5 +1,6 @@
 'use client';
 
+import PushOptIn from '@/components/PushOptIn';
 import { DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
 import React, { useState, useEffect } from 'react';
 import { Home, ShoppingCart, ClipboardList, LogOut, ChevronLeft, ChevronRight, User } from 'lucide-react';
@@ -195,6 +196,7 @@ function CustomerTabContent({
             />
           )}
           <DiscoverHeader />
+          <PushOptIn message="Get a notification when your order or parcel moves." className="mb-6" />
           <AIRecommendations
             compactEntry
             onOpenLane={onOpenAiPicks}

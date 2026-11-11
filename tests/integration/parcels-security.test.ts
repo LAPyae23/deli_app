@@ -79,7 +79,7 @@ describe('middleware', () => {
   const call = async (path: string, token?: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
     if (token) headers.set('cookie', `${SESSION_COOKIE}=${token}`);
-    const res = await middleware(new NextRequest(`http://localhost${path}`, { ...init, headers }));
+    const res = await middleware(new NextRequest(`http://localhost${path}`, { method: init.method, headers }));
     return res.status;
   };
 
@@ -105,7 +105,7 @@ describe('middleware', () => {
 describe('uploads and rate limits', () => {
   const send = (bytes: Uint8Array, user?: { id: string; role: any }) => {
     const form = new FormData();
-    form.append('file', new Blob([bytes]), 'x.png');
+    form.append('file', new Blob([bytes as BlobPart]), 'x.png');
     const headers = new Headers();
     if (user) {
       headers.set('x-auth-user-id', user.id);

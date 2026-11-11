@@ -8,6 +8,7 @@ import { forbidden, getSession, unauthorized } from '@/lib/auth';
 import { toLatLng, travelMinutes } from '@/lib/geo';
 import { RIDER_MAX_ACTIVE_PARCELS, isParty, viewFor, type ParcelDoc } from '@/lib/parcels';
 import { applyCodWalletDeduction, isRiderBlocked } from '@/lib/riderWallet';
+import { sendPush } from '@/lib/push';
 
 type Ctx = { params: Promise<{ id: string }> | { id: string } };
 
@@ -55,6 +56,19 @@ export async function PATCH(request: Request, { params }: Ctx) {
   const done = async (filter: Record<string, unknown>, set: Record<string, unknown>, conflict: string) => {
     const updated = await Parcel.findOneAndUpdate({ _id: id, ...filter }, { $set: set }, { new: true }).lean<ParcelDoc>();
     if (!updated) return bad(409, conflict);
+    const text: Record<string, string> = {
+      ACCEPTED: `${updated.riderName || 'A rider'} is coming to pick it up.`,
+      PICKED_UP: 'Picked up — on the way to the recipient.',
+      DELIVERED: 'Delivered. Thank you for using FoodDash Express!',
+    };
+    if (set.status && text[String(set.status)]) {
+      await sendPush([String(updated.senderId), String(updated.recipientId || '')], {
+        title: `Parcel ${updated.code}`,
+        body: text[String(set.status)],
+        url: '/customer-dashboard/parcels',
+        tag: `parcel-${updated.code}`,
+      });
+    }
     return NextResponse.json({ success: true, parcel: viewFor(session, updated) });
   };
 

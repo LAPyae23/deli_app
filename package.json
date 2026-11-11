@@ -80,7 +80,8 @@
     "react-leaflet": "^5.0.0",
     "recharts": "^2.15.4",
     "simple-statistics": "^7.10.0",
-    "sonner": "^1.7.4"
+    "sonner": "^1.7.4",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
@@ -90,6 +91,7 @@
     "@types/node": "^20",
     "@types/react": "19.0.3",
     "@types/react-dom": "19.0.3",
+    "@types/web-push": "^3.6.4",
     "@typescript-eslint/eslint-plugin": "^8.29.0",
     "@typescript-eslint/parser": "^8.29.0",
     "autoprefixer": "10.4.2",

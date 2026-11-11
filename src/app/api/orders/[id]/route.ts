@@ -8,6 +8,9 @@ import {
   isRiderBlocked,
 } from '@/lib/riderWallet';
 import { pricingFromOrder } from '@/lib/orderPricing';
+import { orderStatusPush, sendPush } from '@/lib/push';
+import { notifyNearestRiders } from '@/lib/notify';
+import { toLatLng } from '@/lib/geo';
 import RestaurantProfile from '@/models/RestaurantProfile';
 import { forbidden, getSession, unauthorized, type Session } from '@/lib/auth';
 
@@ -353,6 +356,26 @@ export async function PATCH(
         },
         { status: 409 }
       );
+    }
+
+    // Push notifications (best effort, a few seconds at most).
+    const newStatus = String(updatedOrder.status || '').toUpperCase();
+    if (updateData.status != null && newStatus !== String(existingOrder.status || '').toUpperCase()) {
+      const orderNumber = String(updatedOrder.orderNumber || '');
+      const pushes: Promise<unknown>[] = [];
+      const customerMsg = orderStatusPush(newStatus, orderNumber);
+      if (customerMsg) pushes.push(sendPush([String(updatedOrder.customerId || '')], customerMsg));
+      if (newStatus === 'PREPARING' && !String(updatedOrder.riderId || '')) {
+        pushes.push(
+          notifyNearestRiders(toLatLng(updatedOrder.restaurantCoords), {
+            title: 'New delivery near you',
+            body: `${updatedOrder.restaurantName || 'A restaurant'} · ${orderNumber}`,
+            url: '/rider-fleet-dashboard',
+            tag: `dispatch-${orderNumber}`,
+          })
+        );
+      }
+      await Promise.allSettled(pushes);
     }
 
     let wallet: Awaited<ReturnType<typeof applyCodWalletDeduction>> = null;
