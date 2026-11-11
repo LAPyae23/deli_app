@@ -50,7 +50,9 @@
     "test:apis": "tsx scripts/test-all-apis.ts",
     "seed": "tsx scripts/seed.ts",
     "seed:bulk-orders": "tsx scripts/seed-bulk-orders.ts",
-    "seed:ai-picks": "tsx scripts/seed-ai-picks.ts"
+    "seed:ai-picks": "tsx scripts/seed-ai-picks.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.41",
@@ -95,11 +97,13 @@
     "eslint-config-next": "^15.2.4",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
+    "mongodb-memory-server": "^10.4.3",
     "postcss": "8.4.8",
     "prettier": "^3.5.3",
     "tailwindcss": "3.4.6",
     "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.23.11",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }
