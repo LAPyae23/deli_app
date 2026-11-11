@@ -1,4 +1,6 @@
 import { openai } from '@ai-sdk/openai';
+import { getSession } from '@/lib/auth';
+import { clientIp, rateLimit } from '@/lib/rateLimit';
 import {
   convertToModelMessages,
   streamText,
@@ -145,6 +147,15 @@ ${catalog}`;
 
 export async function POST(req: Request) {
   try {
+    // Each AI reply costs money: 30 messages per user per hour.
+    const session = getSession(req);
+    const limit = await rateLimit(`chat:${session?.userId || clientIp(req)}`, 30, 60 * 60_000);
+    if (!limit.allowed) {
+      return Response.json(
+        { success: false, message: 'You have sent a lot of messages. Please try again a bit later.' },
+        { status: 429, headers: { 'Retry-After': String(limit.retryAfterSec) } }
+      );
+    }
     const body = await req.json().catch(() => ({}));
     const incoming =
       Array.isArray(body?.messages) && body.messages.length > 0

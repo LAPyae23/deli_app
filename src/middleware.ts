@@ -35,6 +35,7 @@ const API_RULES: Rule[] = [
 
   // Public browsing
   { prefix: '/api/restaurants', methods: ['GET'], access: 'public' },
+  { prefix: '/api/images/', methods: ['GET'], access: 'public' },
   { prefix: '/api/menu', methods: ['GET'], access: 'public' },
   { prefix: '/api/recommendations', methods: ['GET'], access: 'public' },
   { prefix: '/api/menu', access: ['RESTAURANT', 'ADMIN'] },

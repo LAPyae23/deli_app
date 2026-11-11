@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
 import bcrypt from 'bcryptjs';
+import { clientIp, rateLimit } from '@/lib/rateLimit';
 import { SESSION_COOKIE, createSessionToken, sessionCookieOptions, type Role } from '@/lib/auth';
 
 export async function POST(request: Request) {
@@ -42,6 +43,14 @@ export async function POST(request: Request) {
     }
 
     await dbConnect();
+
+    const limit = await rateLimit(`register-ip:${clientIp(request)}`, 5, 60 * 60_000);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { success: false, message: 'Too many sign-ups from this network. Try again later.' },
+        { status: 429, headers: { 'Retry-After': String(limit.retryAfterSec) } }
+      );
+    }
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
