@@ -10,6 +10,9 @@ export type PlaceOrderPayload = {
   tipAmount?: number;
   discount?: number;
   promoCodeUsed?: string;
+  usePoints?: boolean;
+  /** ISO time for a scheduled delivery, '' for as soon as possible. */
+  scheduledFor?: string;
 };
 
 export type PlaceOrderResponse = {
@@ -17,6 +20,7 @@ export type PlaceOrderResponse = {
   orderId: string;
   orderNumber: string;
   estimatedDeliveryMinutes: number;
+  scheduledFor?: string | null;
   message: string;
 };
 

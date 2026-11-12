@@ -3,7 +3,7 @@ import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
 import RiderProfile from '@/models/RiderProfile';
 import SystemConfig from '@/models/SystemConfig';
-import { cacheGetOrSet } from '@/lib/ttlCache';
+import { sharedGetOrSet as cacheGetOrSet } from '@/lib/sharedCache';
 import { getYangonWeather, isWet } from '@/lib/weather';
 import { getRainDemand } from '@/lib/weatherDemand';
 

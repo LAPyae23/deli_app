@@ -10,9 +10,13 @@ import {
   subtotalFromItems,
 } from '@/lib/orderPricing';
 import { resolveOrderLines } from '@/lib/orderLines';
-import { haversineKm, toLatLng, travelMinutes, type LatLng } from '@/lib/geo';
+import { haversineKm, ROAD_FACTOR, toLatLng, travelMinutes, type LatLng } from '@/lib/geo';
 import { getYangonWeather } from '@/lib/weather';
 import { sendPush } from '@/lib/push';
+import { claimPromo, normalizeCode } from '@/lib/promotions';
+import { pointsRedemption } from '@/lib/loyalty';
+import { checkSchedule, yangonMinuteOfDay } from '@/lib/schedule';
+import { predictMinutes } from '@/lib/etaModel';
 
 const FALLBACK_COORDS = { lat: 16.8409, lng: 96.1735 };
 
@@ -185,7 +189,7 @@ export async function GET(request: Request) {
     const riderDispatch = session.role === 'RIDER' && isDispatchPool;
     const orders = await Order.find(query)
       .select(
-        'orderNumber restaurantName restaurantId customerId customerName status items.name items.quantity items.price items.category items.unitPrice items.id items.options items.note items.restaurantName items.image items.imageAlt totals deliveryAddress paymentMethod createdAt updatedAt riderId riderName prepTime travelMins durationMins restaurantCoords riderCoords discount tipAmount'
+        'orderNumber restaurantName restaurantId customerId customerName status items.name items.quantity items.price items.category items.unitPrice items.id items.options items.note items.restaurantName items.image items.imageAlt totals deliveryAddress paymentMethod createdAt updatedAt riderId riderName prepTime travelMins durationMins restaurantCoords riderCoords discount tipAmount scheduledFor groupCode groupShares pointsEarned pointsRedeemed'
       )
       // Dispatch pool: oldest first so waiting orders are not starved.
       .sort({ createdAt: riderDispatch ? 1 : -1 })
@@ -238,26 +242,30 @@ export async function POST(request: Request) {
     const items = resolved.items;
     body.restaurantId = resolved.restaurantId;
 
-    // Block orders to CLOSED / BUSY restaurants
-    if (body.restaurantId) {
-      const restaurantProfile = await RestaurantProfile.findOne({
-        restaurantId: String(body.restaurantId),
-      })
-        .select('storeStatus restaurantName')
-        .lean();
-      const storeStatus = String(restaurantProfile?.storeStatus || 'OPEN').toUpperCase();
+    // Scheduled delivery time must be inside opening hours; ASAP orders need an open store.
+    const storeProfile = body.restaurantId
+      ? await RestaurantProfile.findOne({ restaurantId: String(body.restaurantId) })
+          .select('storeStatus openingTime closingTime')
+          .lean<{ storeStatus?: string; openingTime?: string; closingTime?: string }>()
+      : null;
+    const schedule = checkSchedule(body.scheduledFor, {
+      openingTime: storeProfile?.openingTime,
+      closingTime: storeProfile?.closingTime,
+    });
+    if (!schedule.ok) {
+      return NextResponse.json({ success: false, message: schedule.message }, { status: 400 });
+    }
+    if (storeProfile && !schedule.at) {
+      const storeStatus = String(storeProfile.storeStatus || 'OPEN').toUpperCase();
       if (storeStatus === 'CLOSED') {
         return NextResponse.json(
-          { success: false, message: 'This restaurant is closed and cannot accept orders' },
+          { success: false, message: 'This restaurant is closed now. You can schedule the order for later.' },
           { status: 400 }
         );
       }
       if (storeStatus === 'BUSY') {
         return NextResponse.json(
-          {
-            success: false,
-            message: 'This restaurant is temporarily unavailable',
-          },
+          { success: false, message: 'This restaurant is temporarily unavailable' },
           { status: 400 }
         );
       }
@@ -311,59 +319,46 @@ export async function POST(request: Request) {
 
     const customerId = session.userId;
 
-    // Promo: only a code granted to this customer counts, and it is consumed
-    // atomically here so the same code cannot be used twice.
-    const promoCodeRequested = String(body.promoCodeUsed || body.totals?.promoCodeUsed || '')
-      .trim()
-      .toUpperCase();
-    let discountPercent = 0;
+    // Promo code: checked and used atomically here (personal, streak or campaign code).
+    const promoCodeRequested = normalizeCode(body.promoCodeUsed || body.totals?.promoCodeUsed);
+    let discount = 0;
     let promoCodeUsed = '';
-    let promoRestore: Record<string, unknown> | null = null;
+    const releases: Array<() => Promise<unknown>> = [];
+    let attachPromo: ((orderId: string) => Promise<void>) | null = null;
     if (promoCodeRequested) {
+      const claim = await claimPromo(customerId, promoCodeRequested, pricing.subtotal, pricing.deliveryFee);
+      if (!claim.ok) {
+        return NextResponse.json({ success: false, message: claim.message }, { status: 400 });
+      }
+      discount = Math.min(claim.discount, pricing.subtotal + pricing.deliveryFee);
+      promoCodeUsed = claim.code;
+      releases.push(claim.release);
+      attachPromo = claim.attach;
+    }
+
+    // Loyalty points: spent atomically (balance must still cover them).
+    let pointsRedeemed = 0;
+    let pointsValue = 0;
+    if (body.usePoints === true) {
       const profile = await CustomerProfile.findOne({ customerId })
-        .select('hasPromo promoCode promoDiscountPercent hasStreakReward streakVoucherCode streakDiscountPercent')
-        .lean<{
-          hasPromo?: boolean;
-          promoCode?: string;
-          promoDiscountPercent?: number;
-          hasStreakReward?: boolean;
-          streakVoucherCode?: string;
-          streakDiscountPercent?: number;
-        }>();
-      const adminCode = String(profile?.promoCode || '').trim().toUpperCase();
-      const streakCode = String(profile?.streakVoucherCode || '').trim().toUpperCase();
-      if (profile?.hasPromo && adminCode && adminCode === promoCodeRequested) {
-        const claimed = await CustomerProfile.findOneAndUpdate(
-          { customerId, hasPromo: true, promoCode: profile.promoCode },
-          { $set: { hasPromo: false, promoCode: '', promoDiscountPercent: 0 } }
+        .select('loyaltyPoints')
+        .lean<{ loyaltyPoints?: number }>();
+      const plan = pointsRedemption(Number(profile?.loyaltyPoints) || 0, pricing.subtotal - Math.min(discount, pricing.subtotal));
+      if (plan.points > 0) {
+        const spent = await CustomerProfile.updateOne(
+          { customerId, loyaltyPoints: { $gte: plan.points } },
+          { $inc: { loyaltyPoints: -plan.points } }
         );
-        if (claimed) {
-          discountPercent = Number(profile.promoDiscountPercent) || 0;
-          promoCodeUsed = promoCodeRequested;
-          promoRestore = {
-            hasPromo: true,
-            promoCode: profile.promoCode,
-            promoDiscountPercent: profile.promoDiscountPercent,
-          };
-        }
-      } else if (profile?.hasStreakReward && streakCode && streakCode === promoCodeRequested) {
-        const claimed = await CustomerProfile.findOneAndUpdate(
-          { customerId, hasStreakReward: true, streakVoucherCode: profile.streakVoucherCode },
-          { $set: { hasStreakReward: false, streakVoucherCode: '', streakDiscountPercent: 0 } }
-        );
-        if (claimed) {
-          discountPercent = Number(profile.streakDiscountPercent) || 0;
-          promoCodeUsed = promoCodeRequested;
-          promoRestore = {
-            hasStreakReward: true,
-            streakVoucherCode: profile.streakVoucherCode,
-            streakDiscountPercent: profile.streakDiscountPercent,
-          };
+        if (spent.modifiedCount === 1) {
+          pointsRedeemed = plan.points;
+          pointsValue = plan.value;
+          releases.push(() =>
+            CustomerProfile.updateOne({ customerId }, { $inc: { loyaltyPoints: plan.points } })
+          );
         }
       }
     }
-    discountPercent = Math.min(100, Math.max(0, discountPercent));
-    const discount = Math.round(pricing.subtotal * (discountPercent / 100));
+    const releaseAll = () => Promise.allSettled(releases.map((r) => r()));
     const promoApplied = discount > 0;
 
     // Surge is not charged to customers yet; analytics fields are simulated server-side.
@@ -379,7 +374,15 @@ export async function POST(request: Request) {
     const travelMins = dropoff
       ? travelMinutes(restaurantCoords, dropoff)
       : Math.round(4 + 3.5 * 3);
-    const durationMins = prepTime + travelMins;
+    const roadKm = dropoff ? Math.round(haversineKm(restaurantCoords, dropoff) * ROAD_FACTOR * 100) / 100 : 3.5;
+    // Learned ETA from past deliveries when there is enough data; rule-based otherwise.
+    const learnedMins = await predictMinutes({
+      roadKm,
+      items: items.reduce((n, i) => n + (Number(i.quantity) || 1), 0),
+      hour: Math.floor(yangonMinuteOfDay(new Date()) / 60),
+      wet: weather === 'Rainy' || weather === 'Stormy',
+    });
+    const durationMins = learnedMins ?? prepTime + travelMins;
 
     const [orderSeq, priorCustomerOrders] = await Promise.all([
       Order.countDocuments(),
@@ -387,7 +390,7 @@ export async function POST(request: Request) {
     ]);
     const orderNumber = `#FP-${String(orderSeq + 1).padStart(5, '0')}`;
     const customerOrderCount = priorCustomerOrders + 1;
-    const customerTotal = Math.max(0, Math.round(pricing.total - discount));
+    const customerTotal = Math.max(0, Math.round(pricing.total - discount - pointsValue));
 
     const totals = {
       subtotal: pricing.subtotal,
@@ -397,6 +400,8 @@ export async function POST(request: Request) {
       discount,
       promoApplied,
       promoCodeUsed,
+      pointsRedeemed,
+      pointsValue,
       surgePrice,
       restaurantCommission: pricing.restaurantCommission,
       restaurantCommissionRate: pricing.restaurantCommissionRate,
@@ -433,17 +438,20 @@ export async function POST(request: Request) {
       prepTime,
       travelMins,
       durationMins,
+      distanceKm: roadKm,
       customerOrderCount,
       unassigned: true,
       baseRiderFee: Math.max(0, pricing.riderEarning - pricing.tipAmount),
       tipAmount: pricing.tipAmount,
+      scheduledFor: schedule.at,
+      pointsRedeemed,
+      pointsValue,
     });
     } catch (createError) {
-      if (promoRestore) {
-        await CustomerProfile.updateOne({ customerId }, { $set: promoRestore }).catch(() => {});
-      }
+      await releaseAll();
       throw createError;
     }
+    if (attachPromo) await attachPromo(String(newOrder._id)).catch(() => {});
 
     // Auto-deduct menu stock for each ordered item
     for (const item of items) {
@@ -480,7 +488,9 @@ export async function POST(request: Request) {
     }
 
     await sendPush([restaurantId], {
-      title: `New order ${newOrder.orderNumber}`,
+      title: schedule.at
+        ? `Scheduled order ${newOrder.orderNumber}`
+        : `New order ${newOrder.orderNumber}`,
       body: `${items.reduce((n, i) => n + i.quantity, 0)} item(s) · ${customerTotal.toLocaleString()} Ks`,
       url: '/restaurant-vendor-portal',
       tag: `new-order-${newOrder.orderNumber}`,
@@ -490,7 +500,9 @@ export async function POST(request: Request) {
       success: true,
       orderId: String(newOrder._id),
       orderNumber: newOrder.orderNumber,
-      estimatedDeliveryMinutes: 30,
+      estimatedDeliveryMinutes: durationMins,
+      scheduledFor: schedule.at,
+      totals,
       message: 'Order placed successfully',
     });
 

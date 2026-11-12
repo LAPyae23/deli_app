@@ -19,7 +19,8 @@ import { toast } from 'sonner';
 import AppImage from '@/components/ui/AppImage';
 import { formatMMK } from '@/lib/currency';
 import { calculateOrderPricing, DEFAULT_DELIVERY_FEE_KS } from '@/lib/orderPricing';
-import OrderReceiptModal, { type PaymentMethod } from './OrderReceiptModal';
+import { useT } from '@/lib/i18n';
+import OrderReceiptModal, { type CheckoutExtras, type PaymentMethod } from './OrderReceiptModal';
 import { placeOrder } from '../services/orderService';
 import type { CartItem, DeliveryAddressInfo, OrderTotals } from '../types';
 
@@ -68,6 +69,7 @@ export default function CartPanel({
   onGoDiscover,
   onOrderSuccess,
 }: CartPanelProps) {
+  const { tx } = useT();
   const [selectedItems, setSelectedItems] = useState<string[]>(() => items.map((i) => i.id));
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
@@ -246,8 +248,31 @@ export default function CartPanel({
     toast.success(`${pct}% off applied`);
   };
 
-  const tryApplyCartPromo = () => {
+  const tryApplyCartPromo = async () => {
     const entered = promoInput.trim().toUpperCase();
+    if (entered && subtotal > 0) {
+      try {
+        const res = await fetch('/api/customer/checkout-quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subtotal, deliveryFee, promoCode: entered }),
+        });
+        const data = await res.json();
+        if (data?.promo?.ok) {
+          setAppliedCode(data.promo.code);
+          setAppliedPercent(subtotal > 0 ? (Number(data.promo.discount) / subtotal) * 100 : 0);
+          setPromoApplied(true);
+          toast.success(`${data.promo.label} applied`);
+          return;
+        }
+        if (data?.promo?.message) {
+          toast.error(data.promo.message);
+          return;
+        }
+      } catch {
+        /* fall back to the local check below */
+      }
+    }
     const expected = String(grantedPromo?.promoCode || '').trim().toUpperCase();
     const percent = Number(grantedPromo?.promoDiscountPercent) || 0;
     if (
@@ -298,7 +323,8 @@ export default function CartPanel({
 
   const handlePlaceOrder = async (
     tipAmount = 0,
-    promo?: { discount: number; promoApplied: boolean; promoCodeUsed?: string }
+    promo?: { discount: number; promoApplied: boolean; promoCodeUsed?: string },
+    extras?: CheckoutExtras
   ): Promise<string | null> => {
     if (selectedCartItems.length === 0) return null;
 
@@ -335,13 +361,19 @@ export default function CartPanel({
         tipAmount: safeTip,
         discount: discountAmount,
         promoCodeUsed,
+        usePoints: Boolean(extras?.usePoints),
+        scheduledFor: extras?.scheduledFor || '',
       });
 
       const purchasedIds = selectedCartItems.map((i) => i.id);
       removePurchasedItems(purchasedIds);
       setSelectedItems((prev) => prev.filter((id) => !purchasedIds.includes(id)));
 
-      toast.success(`Order ${result.orderNumber} placed successfully`);
+      toast.success(
+        result.scheduledFor
+          ? `Order ${result.orderNumber} scheduled for ${new Date(result.scheduledFor).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`
+          : `Order ${result.orderNumber} placed successfully`
+      );
       setPlacedOrderId(result.orderId);
       setPromoApplied(false);
       setAppliedPercent(0);
@@ -376,7 +408,7 @@ export default function CartPanel({
           >
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
-          <h2 className="font-bold text-base text-foreground">Cart</h2>
+          <h2 className="font-bold text-base text-foreground">{tx('Cart')}</h2>
           <button
             type="button"
             className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground"
@@ -764,27 +796,27 @@ export default function CartPanel({
                     <Circle className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   )}
                   <span className="text-xs font-semibold text-foreground whitespace-nowrap">
-                    Select All
+                    {tx('Select All')}
                   </span>
                 </button>
               </div>
               <div className="mb-3 space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="text-muted-foreground">{tx('Subtotal')}</span>
                   <span className="font-semibold font-tabular text-foreground">
                     {formatMMK(subtotal)}
                   </span>
                 </div>
                 {discountAmount > 0 && (
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Discount</span>
+                    <span className="text-muted-foreground">{tx('Discount')}</span>
                     <span className="font-semibold font-tabular text-danger">
                       - {formatMMK(discountAmount)}
                     </span>
                   </div>
                 )}
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-bold text-foreground">Total</span>
+                  <span className="font-bold text-foreground">{tx('Total')}</span>
                   <span className="font-bold font-tabular text-customer">
                     {formatMMK(total)}
                   </span>
@@ -796,7 +828,7 @@ export default function CartPanel({
                 disabled={selectedItems.length === 0}
                 className="w-full rounded-lg py-2.5 text-sm font-bold text-white bg-customer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
               >
-                Checkout
+                {tx('Checkout')}
               </button>
             </div>
           </>

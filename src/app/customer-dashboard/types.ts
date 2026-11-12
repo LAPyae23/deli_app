@@ -48,6 +48,11 @@ export type Restaurant = {
   isOpen: boolean;
   /** 'HH:MM' local opening time, used to say when a closed shop opens. */
   openingTime?: string;
+  /** Minutes until the restaurant closes (set when it closes within the day). */
+  closesInMins?: number | null;
+  /** This hour is usually one of the restaurant's busiest (from 28 days of orders). */
+  busyNow?: boolean;
+  busyHours?: number[];
   storeStatus?: 'OPEN' | 'BUSY' | 'CLOSED';
   discount: string | null;
   lat?: number;

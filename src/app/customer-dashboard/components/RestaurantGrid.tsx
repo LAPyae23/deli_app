@@ -22,6 +22,7 @@ export type RestaurantProfileDoc = {
   closingTime?: string;
   storeStatus?: 'OPEN' | 'BUSY' | 'CLOSED' | string;
   location?: { lat?: number; lng?: number };
+  busyHours?: number[];
 };
 
 const PLACEHOLDER_IMAGE = '/assets/images/no_image.png';
@@ -57,6 +58,17 @@ function isOpenNow(openingTime?: string, closingTime?: string): boolean {
   return mins >= openMins || mins < closeMins;
 }
 
+/** Minutes until closing (local clock), or null when closed or unknown. */
+function minutesUntilClose(openingTime?: string, closingTime?: string): number | null {
+  if (!closingTime || !isOpenNow(openingTime, closingTime)) return null;
+  const [h, m] = closingTime.split(':').map(Number);
+  if (![h, m].every(Number.isFinite)) return null;
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const close = h * 60 + m;
+  return close > mins ? close - mins : close + 1440 - mins;
+}
+
 function normalizeStoreStatus(
   value?: string
 ): 'OPEN' | 'BUSY' | 'CLOSED' {
@@ -80,13 +92,18 @@ export function mapProfileToRestaurant(profile: RestaurantProfileDoc): Restauran
   const storeStatus = normalizeStoreStatus(profile.storeStatus);
   const withinHours = isOpenNow(profile.openingTime, profile.closingTime);
   const isOpen = storeStatus === 'OPEN' && withinHours;
+  const closesInMins = isOpen ? minutesUntilClose(profile.openingTime, profile.closingTime) : null;
+  const busyNow = isOpen && (profile.busyHours || []).includes(new Date().getHours());
   return {
     id: profile.restaurantId || name,
     name,
     cuisine: profile.description?.trim() || profile.address || 'Local restaurant',
     rating: parseRating(profile.rating),
     reviews: Number(profile.reviews) || 0,
-    deliveryTime: '20-35 min',
+    deliveryTime: busyNow ? '30-45 min' : '20-35 min',
+    closesInMins,
+    busyNow,
+    busyHours: profile.busyHours || [],
     deliveryFee: DEFAULT_DELIVERY_FEE_KS,
     minOrder: 0,
     image,
@@ -108,6 +125,8 @@ function restaurantBadge(r: Restaurant): { label: string; show: boolean } {
   if (r.storeStatus === 'CLOSED') return { label: 'Closed', show: true };
   if (r.storeStatus === 'BUSY') return { label: 'Temporarily Unavailable', show: true };
   if (!r.isOpen) return { label: r.openingTime ? `Opens at ${r.openingTime}` : 'Closed Now', show: true };
+  if (r.closesInMins != null && r.closesInMins <= 60) return { label: `Closes in ${r.closesInMins} min`, show: true };
+  if (r.busyNow) return { label: 'Usually busy now', show: true };
   return { label: '', show: false };
 }
 
@@ -346,7 +365,16 @@ export default function RestaurantGrid({
                       {r.discount}
                     </div>
                   )}
-                  {badge.show && (
+                  {badge.show && selectable && (
+                    <div
+                      className={`absolute bottom-2 right-2 rounded-full px-2.5 py-1 text-[11px] font-bold text-white shadow-sm ${
+                        r.closesInMins != null && r.closesInMins <= 60 ? 'bg-amber-500' : 'bg-violet-600'
+                      }`}
+                    >
+                      {badge.label}
+                    </div>
+                  )}
+                  {badge.show && !selectable && (
                     <div className="absolute inset-0 flex items-center justify-center bg-foreground/55">
                       <span className="rounded-full bg-card px-3 py-1.5 text-xs font-bold text-foreground shadow-sm">
                         {badge.label}
@@ -357,7 +385,7 @@ export default function RestaurantGrid({
                 <div className="p-3.5">
                   <div className="mb-0.5 flex items-start justify-between gap-2">
                     <h3 className="text-sm font-bold text-foreground">{r.name}</h3>
-                    {badge.show && (
+                    {badge.show && !selectable && (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                         {r.storeStatus === 'BUSY' ? 'Busy' : 'Closed'}
                       </span>

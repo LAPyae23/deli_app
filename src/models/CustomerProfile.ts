@@ -35,6 +35,12 @@ const CustomerProfileSchema = new mongoose.Schema(
     hasPromo: { type: Boolean, default: false },
     promoCode: { type: String, default: '' },
     promoDiscountPercent: { type: Number, default: 0 },
+
+    /** Loyalty points: current balance and all-time earned. */
+    loyaltyPoints: { type: Number, default: 0 },
+    lifetimePoints: { type: Number, default: 0 },
+    /** Diet preferences used to filter menus (e.g. 'Vegetarian', 'Halal'). */
+    dietPrefs: { type: [String], default: [] },
   },
   { timestamps: true }
 );

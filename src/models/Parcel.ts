@@ -11,6 +11,22 @@ const PlaceSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/** Extra drop-off after the main one (multi-stop parcel). */
+const StopSchema = new mongoose.Schema(
+  {
+    address: { type: String, required: true },
+    detail: { type: String, default: '' },
+    lat: { type: Number, required: true },
+    lng: { type: Number, required: true },
+    recipientName: { type: String, required: true },
+    recipientPhone: { type: String, required: true },
+    recipientId: { type: String },
+    deliveryPin: { type: String, required: true },
+    deliveredAt: { type: Date },
+  },
+  { _id: false }
+);
+
 const ParcelSchema = new mongoose.Schema(
   {
     code: { type: String, required: true, unique: true },
@@ -46,6 +62,10 @@ const ParcelSchema = new mongoose.Schema(
     },
     /** 4-digit proof-of-delivery code; never shown to the rider. */
     deliveryPin: { type: String, required: true },
+    /** Up to 2 more drop-offs, delivered in this order after the main drop-off. */
+    extraStops: { type: [StopSchema], default: [] },
+    /** When the main drop-off was handed over (multi-stop parcels stay PICKED_UP until the last stop). */
+    mainDeliveredAt: { type: Date },
     riderId: { type: String, default: '', index: true },
     riderName: { type: String, default: '' },
     riderPhone: { type: String, default: '' },

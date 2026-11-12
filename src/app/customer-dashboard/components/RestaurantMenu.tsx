@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Star, Clock, Bike, Plus, UtensilsCrossed, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, Star, Clock, Bike, Plus, UtensilsCrossed, Loader2, Lock, Users, Leaf } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useT } from '@/lib/i18n';
 import { toast } from 'sonner';
 import AppImage from '@/components/ui/AppImage';
 import { formatMMK } from '@/lib/currency';
@@ -34,7 +36,18 @@ interface MenuItem {
   isAvailable?: boolean;
   stockQuantity?: number;
   addons?: { name: string; extraPrice: number }[];
+  dietaryTags?: string[];
+  calories?: number | null;
 }
+
+/** Diet filters: each keeps the dishes that pass its test. */
+const DIET_FILTERS = [
+  { key: 'Vegetarian', test: (i: MenuItem) => (i.dietaryTags || []).some((t) => ['VEGETARIAN', 'VEGAN'].includes(t.toUpperCase())) },
+  { key: 'Halal', test: (i: MenuItem) => (i.dietaryTags || []).some((t) => t.toUpperCase() === 'HALAL') },
+  { key: 'Not spicy', test: (i: MenuItem) => !(i.dietaryTags || []).some((t) => t.toUpperCase() === 'SPICY') },
+  { key: 'Under 500 kcal', test: (i: MenuItem) => i.calories != null && i.calories < 500 },
+] as const;
+type DietKey = (typeof DIET_FILTERS)[number]['key'];
 
 interface RestaurantMenuProps {
   restaurant: Restaurant;
@@ -89,6 +102,8 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
           popular: Boolean(raw.isPopular),
           isAvailable,
           stockQuantity: Number.isFinite(stockQuantity) ? stockQuantity : undefined,
+          dietaryTags: Array.isArray(raw.dietaryTags) ? (raw.dietaryTags as unknown[]).map(String) : [],
+          calories: Number(raw.calories) > 0 ? Number(raw.calories) : null,
           addons: rawAddons.map((a: { name?: string; extraPrice?: number }) => ({
             name: String(a?.name || ''),
             extraPrice: Number(a?.extraPrice) || 0,
@@ -166,10 +181,57 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
     (typeof latestDeliveredOrder?.restaurantRating === 'number' &&
       latestDeliveredOrder.restaurantRating > 0);
 
-  const categories = useMemo(
-    () => Array.from(new Set(menuItems.map((i) => i.category).filter(Boolean))),
-    [menuItems]
+  const [dietFilters, setDietFilters] = useState<DietKey[]>([]);
+  const [startingGroup, setStartingGroup] = useState(false);
+  const { tx } = useT();
+  const router = useRouter();
+
+  // Remember diet choices between visits.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('fooddash_diet') || '[]');
+      if (Array.isArray(saved)) setDietFilters(saved.filter((k) => DIET_FILTERS.some((f) => f.key === k)));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleDiet = (key: DietKey) => {
+    setDietFilters((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      localStorage.setItem('fooddash_diet', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const visibleItems = useMemo(
+    () =>
+      menuItems.filter((item) =>
+        dietFilters.every((key) => DIET_FILTERS.find((f) => f.key === key)?.test(item) ?? true)
+      ),
+    [menuItems, dietFilters]
   );
+
+  const categories = useMemo(
+    () => Array.from(new Set(visibleItems.map((i) => i.category).filter(Boolean))),
+    [visibleItems]
+  );
+
+  const startGroupOrder = async () => {
+    setStartingGroup(true);
+    try {
+      const res = await fetch('/api/group-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId: restaurant.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Could not start a group order');
+      router.push(`/customer-dashboard/group/${data.code}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start a group order');
+      setStartingGroup(false);
+    }
+  };
 
   const submitRestaurantReview = async () => {
     if (!latestDeliveredOrder?._id) {
@@ -308,6 +370,44 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
             </div>
           </div>
 
+          {/* Group order + diet filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={startGroupOrder}
+              disabled={startingGroup}
+              className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-violet-700 disabled:opacity-60"
+            >
+              <Users className="h-3.5 w-3.5" />
+              {startingGroup ? 'Starting…' : tx('Group order')}
+            </button>
+            <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
+            <span className="flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+              <Leaf className="h-3.5 w-3.5" /> {tx('Diet filter')}:
+            </span>
+            {DIET_FILTERS.map((f) => {
+              const on = dietFilters.includes(f.key);
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => toggleDiet(f.key)}
+                  aria-pressed={on}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    on ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700' : 'border-border bg-card text-muted-foreground'
+                  }`}
+                >
+                  {tx(f.key)}
+                </button>
+              );
+            })}
+          </div>
+          {!isLoading && menuItems.length > 0 && visibleItems.length === 0 && (
+            <p className="rounded-xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+              No dishes match these filters. Restaurants add diet tags and calories in their menu settings.
+            </p>
+          )}
+
           {/* Loading */}
           {isLoading && (
             <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-card py-16 text-muted-foreground">
@@ -331,7 +431,7 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
           {!isLoading && menuItems.length > 0 && (
             <div className="space-y-8">
               {categories.map((category) => {
-                const items = menuItems.filter((i) => i.category === category);
+                const items = visibleItems.filter((i) => i.category === category);
                 return (
                   <div key={category}>
                     <h2 className="mb-3 text-lg font-bold text-foreground">{category}</h2>
@@ -370,6 +470,20 @@ export default function RestaurantMenu({ restaurant, onBack, onAddToCart }: Rest
                             <p className="mb-2 line-clamp-2 text-xs text-muted-foreground sm:text-sm">
                               {item.description || 'No description'}
                             </p>
+                            {((item.dietaryTags && item.dietaryTags.length > 0) || item.calories) && (
+                              <div className="mb-2 flex flex-wrap gap-1">
+                                {(item.dietaryTags || []).map((tag) => (
+                                  <span key={tag} className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                    {tag.replace('_', ' ').toLowerCase()}
+                                  </span>
+                                ))}
+                                {item.calories ? (
+                                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                                    {item.calories} kcal
+                                  </span>
+                                ) : null}
+                              </div>
+                            )}
                             <p className="text-sm font-bold font-tabular text-foreground">
                               {formatMMK(item.price)}
                             </p>

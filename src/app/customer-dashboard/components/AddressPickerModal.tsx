@@ -1,5 +1,7 @@
 'use client';
 
+
+import { NOMINATIM_URL } from '@/lib/mapServices';
 /**
  * Address picker using OpenStreetMap + Leaflet (free alternative to Google Maps).
  * Requires: npm install leaflet react-leaflet
@@ -44,7 +46,7 @@ function formatCoords(lat: number, lng: number) {
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
+      `${NOMINATIM_URL}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
       { headers: { Accept: 'application/json' } }
     );
     if (!res.ok) return null;

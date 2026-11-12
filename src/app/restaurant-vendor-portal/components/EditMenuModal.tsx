@@ -15,6 +15,7 @@ export interface EditableMenuItem {
   stockQuantity: number;
   isPopular: boolean;
   dietaryTags: string[];
+  calories?: number | null;
   addons?: { name: string; extraPrice: number }[];
   image?: string;
   imageAlt?: string;
@@ -46,6 +47,7 @@ const EMPTY_FORM = {
   image: '',
   isPopular: false,
   dietaryTags: [] as string[],
+  calories: '' as string | number,
 };
 
 export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: EditMenuModalProps) {
@@ -68,6 +70,7 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
       image: item.image || '',
       isPopular: Boolean(item.isPopular),
       dietaryTags: item.dietaryTags || [],
+      calories: item.calories ?? '',
     });
     setAddons(
       (item.addons || []).map((a, idx) => ({
@@ -150,6 +153,7 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
         prepTime: formData.prepTime,
         stockQuantity,
         dietaryTags: formData.dietaryTags,
+        calories: formData.calories,
         isPopular: formData.isPopular,
         isAvailable: stockQuantity > 0,
         image: formData.image,
@@ -314,6 +318,18 @@ export default function EditMenuModal({ isOpen, item, onClose, onSuccess }: Edit
             </div>
 
             <div>
+              <label className="mb-2 block text-sm font-semibold">
+                Calories per serving <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={5000}
+                value={formData.calories}
+                onChange={(e) => setFormData((prev) => ({ ...prev, calories: e.target.value }))}
+                placeholder="e.g. 450"
+                className="input-field mb-4 w-full py-2.5 text-sm"
+              />
               <label className="mb-2 block text-sm font-semibold">Dietary Tags</label>
               <div className="flex flex-wrap gap-2">
                 {DIETARY_OPTIONS.map((tag) => {

@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const query = restaurantId ? { restaurantId } : {};
     const items = await MenuItem.find(query)
       .select(
-        'restaurantId name category description price discountPrice prepTime stockQuantity isAvailable isPopular dietaryTags addons image imageAlt rating'
+        'restaurantId name category description price discountPrice prepTime stockQuantity isAvailable isPopular dietaryTags calories addons image imageAlt rating'
       )
       .sort({ createdAt: -1 })
       .lean();
@@ -67,7 +67,15 @@ export async function POST(request: Request) {
         ? undefined
         : Number(prepRaw);
 
+
+    const caloriesRaw = body.calories;
+    const calories =
+      caloriesRaw === '' || caloriesRaw === null || caloriesRaw === undefined
+        ? null
+        : Math.max(0, Math.min(5000, Math.round(Number(caloriesRaw)) || 0)) || null;
+
     const newItem = await MenuItem.create({
+      calories,
       restaurantId: String(body.restaurantId),
       name: body.name,
       category: body.category,

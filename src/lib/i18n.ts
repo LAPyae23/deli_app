@@ -219,6 +219,81 @@ const my: Record<Key, string> = {
   'rp.none': 'အခု အနီးမှာ ပစ္စည်း တောင်းဆိုမှု မရှိသေးပါ။',
 };
 
+
+/**
+ * Phrase translations for the restaurant, admin and checkout screens:
+ * `tx('Orders')` returns the Myanmar text when Myanmar is chosen and the
+ * English text otherwise (also when a phrase has no translation yet).
+ */
+const phrasesMy: Record<string, string> = {
+  // Restaurant portal
+  Dashboard: 'ဒက်ရှ်ဘုတ်',
+  Orders: 'အော်ဒါများ',
+  Menu: 'မီနူး',
+  Profile: 'ပရိုဖိုင်',
+  'Sign Out': 'ထွက်မည်',
+  Analytics: 'ခွဲခြမ်းစိတ်ဖြာမှု',
+  'Active Orders': 'လက်ရှိ အော်ဒါများ',
+  Active: 'လက်ရှိ',
+  History: 'မှတ်တမ်း',
+  Accept: 'လက်ခံမည်',
+  Reject: 'ငြင်းမည်',
+  'Mark Ready': 'အဆင်သင့်ဖြစ်ပြီ',
+  'No active orders': 'လက်ရှိ အော်ဒါ မရှိပါ',
+  'No order history yet': 'အော်ဒါ မှတ်တမ်း မရှိသေးပါ',
+  'New orders will appear here in real-time': 'အော်ဒါအသစ်များ ဒီမှာ ချက်ချင်း ပေါ်လာပါမည်',
+  'Loading orders…': 'အော်ဒါများ ဖွင့်နေသည်…',
+  'Shop analytics': 'ဆိုင် ခွဲခြမ်းစိတ်ဖြာမှု',
+  'Top dishes': 'အရောင်းရဆုံး ဟင်းများ',
+  'Busiest hours': 'အလုပ်အများဆုံး အချိန်များ',
+  'Weather effect': 'ရာသီဥတု သက်ရောက်မှု',
+  'Repeat customers': 'ပြန်လာဝယ်သူများ',
+  'Average rating': 'ပျမ်းမျှ အဆင့်သတ်မှတ်ချက်',
+  'Rainy days': 'မိုးရွာသည့်နေ့များ',
+  'Dry days': 'မိုးမရွာသည့်နေ့များ',
+  // Admin
+  Operations: 'လုပ်ငန်းဆောင်ရွက်မှု',
+  Overview: 'အကျဉ်းချုပ်',
+  Inbox: 'စာတိုက်',
+  'Service Zones': 'ဝန်ဆောင်မှု ဇုန်များ',
+  People: 'လူများ',
+  Vendors: 'ဆိုင်များ',
+  Riders: 'Rider များ',
+  'User Lookup': 'အသုံးပြုသူ ရှာဖွေ',
+  System: 'စနစ်',
+  Configuration: 'ဆက်တင်များ',
+  Marketing: 'စျေးကွက်ရှာဖွေရေး',
+  'Promo Codes': 'Promo Code များ',
+  'System Health': 'စနစ် ကျန်းမာရေး',
+  // Cart & checkout
+  Cart: 'ခြင်းတောင်း',
+  Checkout: 'ငွေရှင်းမည်',
+  Subtotal: 'စုစုပေါင်း (အစားအစာ)',
+  Discount: 'လျှော့စျေး',
+  Total: 'စုစုပေါင်း',
+  'Select All': 'အားလုံး ရွေးမည်',
+  'Promo Code': 'Promo Code',
+  Apply: 'သုံးမည်',
+  'Delivery fee': 'ပို့ခ',
+  'Grand Total': 'ကျသင့်ငွေ စုစုပေါင်း',
+  'Payment Method': 'ငွေပေးချေမှု နည်းလမ်း',
+  'Cash on Delivery': 'ရောက်မှ ငွေချေ',
+  'Tip Rider': 'Rider ကို Tip ပေးမည်',
+  'Loyalty points': 'Loyalty point များ',
+  When: 'ဘယ်အချိန်',
+  'As soon as possible': 'အမြန်ဆုံး',
+  'Schedule for later': 'အချိန်ကြိုရွေးမည်',
+  'Group order': 'အဖွဲ့လိုက် မှာမည်',
+  'Voice order': 'အသံဖြင့် မှာမည်',
+  'Diet filter': 'အစားအသောက် စစ်ထုတ်မှု',
+  Vegetarian: 'သက်သတ်လွတ်',
+  Halal: 'ဟလာလ်',
+  'Not spicy': 'မစပ်',
+  'Under 500 kcal': 'ကယ်လိုရီ 500 အောက်',
+  'My points & codes': 'ငါ့ point နှင့် code များ',
+  Earnings: 'ဝင်ငွေ',
+};
+
 const dict: Record<Lang, Record<Key, string>> = { en, my };
 
 function readLang(): Lang {
@@ -253,5 +328,9 @@ export function useT() {
     },
     [lang]
   );
-  return { t, lang };
+  const tx = useCallback(
+    (english: string) => (lang === 'my' ? phrasesMy[english] ?? english : english),
+    [lang]
+  );
+  return { t, tx, lang };
 }

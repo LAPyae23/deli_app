@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { User, Phone, Mail, MapPin, Save, Plus, Camera, Lock, MessageCircle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import ChatWidget from '@/components/ChatWidget';
+import MyRewards from './MyRewards';
 import {
   SUPPORT_ADMIN_ID,
   SUPPORT_ADMIN_NAME,
@@ -423,6 +424,8 @@ export default function CustomerProfile({
           Change Password
         </Link>
       </div>
+
+      <MyRewards />
 
       {sessionId && (
         <ChatWidget

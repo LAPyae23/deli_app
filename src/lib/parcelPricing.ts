@@ -48,6 +48,41 @@ export function quoteParcel(pickup: LatLng, dropoff: LatLng, size: ParcelSize): 
   };
 }
 
+export const PARCEL_MAX_EXTRA_STOPS = 2;
+/** Each extra drop-off adds handling time for the rider. */
+export const PARCEL_EXTRA_STOP_FEE = 500;
+
+export type RouteQuote = ParcelQuote & { stops: number; stopFee: number; legsKm: number[] };
+
+/**
+ * Multi-stop fare: road km along pickup → stop 1 → stop 2 → stop 3,
+ * plus 500 Ks for each stop after the first.
+ */
+export function quoteParcelRoute(pickup: LatLng, stops: LatLng[], size: ParcelSize): RouteQuote {
+  const points = [pickup, ...stops];
+  const legsKm = stops.map((s, i) => Math.round(haversineKm(points[i], s) * ROAD_FACTOR * 10) / 10);
+  const roadKm = Math.round(legsKm.reduce((a, b) => a + b, 0) * 10) / 10;
+  const distanceFee = round100(roadKm * PARCEL_PER_KM);
+  const sizeFee = PARCEL_SIZES[size].fee;
+  const stopFee = Math.max(0, stops.length - 1) * PARCEL_EXTRA_STOP_FEE;
+  const total = PARCEL_BASE_FEE + distanceFee + sizeFee + stopFee;
+  const riderEarning = round100(total * PARCEL_RIDER_SHARE);
+  const etaMins = stops.reduce((sum, s, i) => sum + travelMinutes(points[i], s), 0);
+  return {
+    roadKm,
+    baseFee: PARCEL_BASE_FEE,
+    distanceFee,
+    sizeFee,
+    stopFee,
+    total,
+    riderEarning,
+    platformFee: total - riderEarning,
+    etaMins,
+    stops: stops.length,
+    legsKm,
+  };
+}
+
 export function isParcelSize(v: unknown): v is ParcelSize {
   return typeof v === 'string' && v in PARCEL_SIZES;
 }

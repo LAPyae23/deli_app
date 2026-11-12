@@ -35,6 +35,7 @@ import {
 } from '@/lib/support';
 import { useNotificationSound } from '@/hooks/useNotificationSound';
 import EarningsChart from './EarningsChart';
+import RiderEarnings from './RiderEarnings';
 import PredictiveHeatmap from './PredictiveHeatmap';
 
 const RiderRouteMap = dynamic(() => import('./RiderRouteMap'), {
@@ -615,7 +616,7 @@ export default function RiderDashboardClient() {
 
     const orderIds = activeDeliveries.map((d) => d.id);
     let lastPatchAt = 0;
-    const PATCH_INTERVAL_MS = 8_000;
+    const PATCH_INTERVAL_MS = 4_000;
     let cancelled = false;
 
     const patchRiderCoords = async (lat: number, lng: number) => {
@@ -1653,6 +1654,8 @@ export default function RiderDashboardClient() {
                     />
                   </div>
                 </div>
+
+                <RiderEarnings />
               </div>
             )}
 

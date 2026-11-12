@@ -15,6 +15,9 @@ import MenuManagement from './MenuManagement';
 import RevenueKPIs from './RevenueKPIs';
 import KitchenInsights from './KitchenInsights';
 import RestaurantProfile from './RestaurantProfile';
+import ShopAnalytics from './ShopAnalytics';
+import LanguageToggle from '@/components/LanguageToggle';
+import { useT } from '@/lib/i18n';
 
 type RestaurantTab = 'dashboard' | 'orders' | 'menu' | 'profile';
 
@@ -81,6 +84,7 @@ function RestaurantTabContent({ activeTab }: { activeTab: RestaurantTab }) {
         <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
           <RevenueKPIs />
           <KitchenInsights />
+          <ShopAnalytics />
         </div>
       );
     case 'orders':
@@ -253,6 +257,7 @@ export default function RestaurantLayout() {
     };
   }, [activeTab]);
 
+  const { tx } = useT();
   const navItems = BASE_NAV_ITEMS.map((item) => ({
     ...item,
     badge:
@@ -322,7 +327,7 @@ export default function RestaurantLayout() {
                 key={item.key}
                 type="button"
                 onClick={() => setActiveTab(item.tab)}
-                title={collapsed ? item.label : undefined}
+                title={collapsed ? tx(item.label) : undefined}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
                   isActive ? 'nav-item-active bg-teal-50 text-restaurant' : 'nav-item'
                 } ${collapsed ? 'justify-center px-0' : ''}`}
@@ -330,7 +335,7 @@ export default function RestaurantLayout() {
                 <item.icon className="h-4 w-4 flex-shrink-0" />
                 {!collapsed && (
                   <>
-                    <span className="flex-1 text-left">{item.label}</span>
+                    <span className="flex-1 text-left">{tx(item.label)}</span>
                     {item.badge && (
                       <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-restaurant px-1.5 text-xs font-bold text-white">
                         {item.badge}
@@ -345,6 +350,7 @@ export default function RestaurantLayout() {
 
         <div className="space-y-1 border-t border-border p-3">
           <ThemeToggle collapsed={collapsed} showLabel />
+          <LanguageToggle collapsed={collapsed} />
           <button
             type="button"
             onClick={() => setActiveTab('profile')}
@@ -361,10 +367,10 @@ export default function RestaurantLayout() {
             className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium nav-item ${
               collapsed ? 'justify-center px-0' : ''
             }`}
-            title={collapsed ? 'Sign Out' : undefined}
+            title={collapsed ? tx('Sign Out') : undefined}
           >
             <LogOut className="h-4 w-4 flex-shrink-0" />
-            {!collapsed && <span>Sign Out</span>}
+            {!collapsed && <span>{tx('Sign Out')}</span>}
           </a>
         </div>
       </aside>
@@ -439,7 +445,7 @@ export default function RestaurantLayout() {
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] font-semibold">{item.label}</span>
+                <span className="text-[10px] font-semibold">{tx(item.label)}</span>
                 {isActive && (
                   <span className="absolute left-1/2 top-0 h-0.5 w-8 -translate-x-1/2 rounded-full bg-restaurant" />
                 )}

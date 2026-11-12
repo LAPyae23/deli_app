@@ -59,6 +59,7 @@ type TrackedOrder = {
   riderCoords?: { lat?: number; lng?: number };
   riderId?: string;
   riderName?: string;
+  scheduledFor?: string | null;
 };
 
 const ORDER_STEPS = [
@@ -198,6 +199,7 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [sessionId, setSessionId] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const [isLive, setIsLive] = useState(false);
   const syncedPrepRef = useRef<number | null>(null);
   const logoFetchedFor = useRef<string | null>(null);
 
@@ -228,13 +230,18 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
   useEffect(() => {
     let cancelled = false;
 
-    async function fetchOrder() {
+    /** Loads the order, or uses one the live stream just pushed. */
+    async function fetchOrder(pushed?: TrackedOrder) {
       try {
-        const res = await fetch(`/api/orders/${activeOrderId}`);
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.message || 'Failed to fetch');
-        if (!cancelled) {
-          const nextOrder = data.order as TrackedOrder;
+        let loaded = pushed;
+        if (!loaded) {
+          const res = await fetch(`/api/orders/${activeOrderId}`);
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.message || 'Failed to fetch');
+          loaded = data.order as TrackedOrder;
+        }
+        if (!cancelled && loaded) {
+          const nextOrder = loaded;
           setOrder(nextOrder);
           setIsLoading(false);
 
@@ -309,11 +316,38 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
       }
     }
 
-    fetchOrder();
-    const interval = setInterval(fetchOrder, POLL_MS);
+    void fetchOrder();
+
+    // Live updates over Server-Sent Events; polling only runs while the stream is down.
+    let live = false;
+    let source: EventSource | null = null;
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      source = new EventSource(`/api/orders/${activeOrderId}/stream`);
+      source.onopen = () => {
+        live = true;
+        setIsLive(true);
+      };
+      source.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data?.order) void fetchOrder(data.order as TrackedOrder);
+        } catch {
+          /* ignore malformed event */
+        }
+      };
+      source.addEventListener('done', () => source?.close());
+      source.onerror = () => {
+        live = false;
+        setIsLive(false);
+      };
+    }
+    const interval = setInterval(() => {
+      if (!live) void fetchOrder();
+    }, POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      source?.close();
     };
   }, [activeOrderId]);
 
@@ -554,6 +588,17 @@ export default function LiveOrderTracker({ activeOrderId, onDismiss }: LiveOrder
             <p className="text-white/70 text-xs truncate hidden sm:block">
               {isPending ? 'Waiting for restaurant to confirm…' : formatItems(order?.items)}
             </p>
+            {order?.scheduledFor && new Date(order.scheduledFor).getTime() > Date.now() && (
+              <p className="mt-0.5 text-[11px] font-semibold text-white">
+                Scheduled for{' '}
+                {new Date(order.scheduledFor).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
+            {isLive && (
+              <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-white/90">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" /> Live
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">

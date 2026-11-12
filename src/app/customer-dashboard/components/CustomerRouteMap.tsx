@@ -1,5 +1,7 @@
 'use client';
 
+
+import { OSRM_URL } from '@/lib/mapServices';
 import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
@@ -61,7 +63,7 @@ export default function CustomerRouteMap({
     const fetchRoute = async () => {
       try {
         const url =
-          `https://router.project-osrm.org/route/v1/driving/` +
+          `${OSRM_URL}/route/v1/driving/` +
           `${restaurantCoords.lng},${restaurantCoords.lat};` +
           `${customerCoords.lng},${customerCoords.lat}` +
           `?overview=full&geometries=geojson`;

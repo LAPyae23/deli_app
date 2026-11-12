@@ -22,6 +22,8 @@ const MenuItemSchema = new mongoose.Schema(
     isAvailable: { type: Boolean, default: true },
     isPopular: { type: Boolean, default: false },
     dietaryTags: [{ type: String }],
+    /** Approximate calories per serving (optional, set by the restaurant). */
+    calories: { type: Number, default: null },
     addons: [AddonSchema],
     image: { type: String, default: '' },
     imageAlt: { type: String, default: '' },

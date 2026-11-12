@@ -425,6 +425,19 @@ export default function CustomerDashboardPage() {
     setShowOrderConfirmation(false);
   };
 
+  // Items added from elsewhere (voice order) arrive as a window event.
+  useEffect(() => {
+    const onAdd = (event: Event) => {
+      const items = (event as CustomEvent<Array<Omit<CartItem, 'quantity'> & { quantity: number }>>).detail;
+      if (!Array.isArray(items)) return;
+      items.forEach((item) => addToCart(item));
+    };
+    window.addEventListener('fooddash:add-to-cart', onAdd);
+    return () => window.removeEventListener('fooddash:add-to-cart', onAdd);
+    // addToCart only uses state setters, so the first one is fine to keep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const clearCart = () => {
     setCartItems([]);
   };

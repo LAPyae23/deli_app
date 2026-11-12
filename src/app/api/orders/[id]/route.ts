@@ -11,21 +11,10 @@ import { pricingFromOrder } from '@/lib/orderPricing';
 import { orderStatusPush, sendPush } from '@/lib/push';
 import { notifyNearestRiders } from '@/lib/notify';
 import { toLatLng } from '@/lib/geo';
+import { awardOrderPoints, refundOrderPoints } from '@/lib/loyaltyServer';
 import RestaurantProfile from '@/models/RestaurantProfile';
 import { forbidden, getSession, unauthorized, type Session } from '@/lib/auth';
-
-type OrderOwnership = {
-  customerId?: unknown;
-  restaurantId?: unknown;
-  restaurantName?: unknown;
-  riderId?: unknown;
-  unassigned?: unknown;
-  status?: unknown;
-};
-
-function isUnassigned(order: OrderOwnership) {
-  return order.unassigned === true || !String(order.riderId || '').trim();
-}
+import { canAccessOrder, isUnassigned, type OrderOwnership } from '@/lib/orderAccess';
 
 /** Whether the signed-in user is a party to this order. */
 /** Which status changes each role may make: from → allowed next statuses. */
@@ -53,29 +42,6 @@ const ALLOWED_FIELDS: Record<Exclude<Session['role'], 'ADMIN'>, string[]> = {
 };
 
 const RATING_FIELDS = ['riderRating', 'restaurantRating', 'reviewComment'];
-
-async function canAccessOrder(session: Session, order: OrderOwnership) {
-  switch (session.role) {
-    case 'ADMIN':
-      return true;
-    case 'CUSTOMER':
-      return String(order.customerId || '') === session.userId;
-    case 'RIDER':
-      // Riders see their own deliveries and the open dispatch pool.
-      return String(order.riderId || '') === session.userId || isUnassigned(order);
-    case 'RESTAURANT': {
-      if (String(order.restaurantId || '') === session.userId) return true;
-      if (String(order.restaurantId || '')) return false;
-      const profile = await RestaurantProfile.findOne({ restaurantId: session.userId })
-        .select('restaurantName')
-        .lean<{ restaurantName?: string }>();
-      const ownName = String(profile?.restaurantName || '').trim();
-      return Boolean(ownName) && String(order.restaurantName || '') === ownName;
-    }
-    default:
-      return false;
-  }
-}
 
 export async function GET(
   request: Request,
@@ -378,10 +344,20 @@ export async function PATCH(
       await Promise.allSettled(pushes);
     }
 
+    // Loyalty points: earned once on delivery, given back if a paid-with-points order is cancelled.
+    if (becomingDelivered) {
+      await awardOrderPoints(String(updatedOrder._id)).catch((e) => console.warn('Points award failed', e));
+    }
+    if (['CANCELLED', 'REJECTED'].includes(newStatus) && Number(updatedOrder.pointsRedeemed) > 0) {
+      await refundOrderPoints(String(updatedOrder._id)).catch((e) => console.warn('Points refund failed', e));
+    }
+
     let wallet: Awaited<ReturnType<typeof applyCodWalletDeduction>> = null;
     if (becomingDelivered && isCodPayment(updatedOrder.paymentMethod)) {
       const riderId = String(updatedOrder.riderId || existingOrder.riderId || '');
-      const owedAmount = pricing.owedAmount;
+      // Cash the rider collected is the discounted total, so use the stored amount.
+      const storedOwed = Number((existingOrder.totals as Record<string, unknown> | undefined)?.owedAmount);
+      const owedAmount = Number.isFinite(storedOwed) ? Math.max(0, storedOwed) : pricing.owedAmount;
       if (riderId && owedAmount > 0) {
         wallet = await applyCodWalletDeduction(riderId, owedAmount);
       }

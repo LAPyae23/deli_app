@@ -30,6 +30,7 @@ const INITIAL_FORM = {
   image: '',
   isPopular: false,
   dietaryTags: [] as string[],
+  calories: '' as string | number,
 };
 
 export default function AddMenuModal({
@@ -124,6 +125,7 @@ export default function AddMenuModal({
         prepTime: formData.prepTime,
         stockQuantity: Number(formData.stockQuantity) || 0,
         dietaryTags: formData.dietaryTags,
+        calories: formData.calories,
         isPopular: formData.isPopular,
         addons: addons
           .filter((a) => a.name.trim())
@@ -297,6 +299,18 @@ export default function AddMenuModal({
 
             {/* Dietary tags */}
             <div>
+              <label className="mb-2 block text-sm font-semibold">
+                Calories per serving <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={5000}
+                value={formData.calories}
+                onChange={(e) => setFormData((prev) => ({ ...prev, calories: e.target.value }))}
+                placeholder="e.g. 450"
+                className="input-field mb-4 w-full py-2.5 text-sm"
+              />
               <label className="mb-2 block text-sm font-semibold">Dietary Tags</label>
               <div className="flex flex-wrap gap-2">
                 {DIETARY_OPTIONS.map((tag) => {

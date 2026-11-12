@@ -1,5 +1,7 @@
 'use client';
 
+
+import { NOMINATIM_URL } from '@/lib/mapServices';
 import React, { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
@@ -176,7 +178,7 @@ export default function RestaurantProfile() {
 
     try {
       const res = await fetch(
-        'https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lng,
+        NOMINATIM_URL + '/reverse?format=json&lat=' + lat + '&lon=' + lng,
         { headers: { Accept: 'application/json' } }
       );
       const data = await res.json();

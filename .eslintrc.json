@@ -4,25 +4,11 @@
     "next/core-web-vitals",
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
-    "plugin:prettier/recommended"
-  ],
-  "parser": "@typescript-eslint/parser",
-  "plugins": [
-    "@typescript-eslint",
     "prettier"
   ],
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint"],
   "rules": {
-    "prettier/prettier": [
-      "error",
-      {
-        "endOfLine": "auto",
-        "singleQuote": true,
-        "semi": true,
-        "tabWidth": 2,
-        "printWidth": 100,
-        "trailingComma": "es5"
-      }
-    ],
     "@typescript-eslint/no-unused-vars": [
       "warn",
       {
@@ -32,23 +18,12 @@
       }
     ],
     "@typescript-eslint/no-explicit-any": "warn",
-    "no-console": [
-      "warn",
-      {
-        "allow": [
-          "warn",
-          "error",
-          "info"
-        ]
-      }
-    ]
+    "@typescript-eslint/no-require-imports": "warn",
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "no-empty": ["warn", { "allowEmptyCatch": true }],
+    "@next/next/no-img-element": "warn"
   },
-  "ignorePatterns": [
-    "node_modules/",
-    ".next/",
-    "out/",
-    "public/"
-  ],
+  "ignorePatterns": ["node_modules/", ".next/", "out/", "public/", "scripts/"],
   "env": {
     "browser": true,
     "node": true,

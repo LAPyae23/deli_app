@@ -128,10 +128,26 @@ export async function PATCH(request: Request, { params }: Ctx) {
 
   if (action === 'deliver') {
     const pin = String(body?.pin || '').trim();
-    if (!pin || pin !== parcel.deliveryPin) return bad(400, 'Wrong delivery PIN. Ask the recipient for the 4-digit code.');
+    const stops = (Array.isArray(parcel.extraStops) ? parcel.extraStops : []) as Array<{
+      deliveryPin: string;
+      deliveredAt?: Date;
+      recipientId?: string;
+    }>;
+    // stop 0 = main drop-off, 1.. = extra stops (in order).
+    const stop = Math.max(0, Math.min(stops.length, Math.floor(Number(body?.stop) || 0)));
+    const expected = stop === 0 ? parcel.deliveryPin : stops[stop - 1]?.deliveryPin;
+    if (!pin || pin !== expected) return bad(400, 'Wrong delivery PIN. Ask the recipient for the 4-digit code.');
+    const mainDone = stop === 0 || Boolean(parcel.mainDeliveredAt);
+    const extrasDone = stops.every((s, i) => i + 1 === stop || Boolean(s.deliveredAt));
+    const finished = mainDone && extrasDone;
+    if (stops.length > 0 && !finished) {
+      // Mark this stop done; the parcel stays PICKED_UP until the last stop.
+      const set = stop === 0 ? { mainDeliveredAt: now } : { [`extraStops.${stop - 1}.deliveredAt`]: now };
+      return done({ status: 'PICKED_UP', riderId: me }, set, 'Parcel is not out for delivery');
+    }
     const res = await done(
       { status: 'PICKED_UP', riderId: me },
-      { status: 'DELIVERED', deliveredAt: now },
+      { status: 'DELIVERED', deliveredAt: now, ...(stop === 0 ? { mainDeliveredAt: now } : { [`extraStops.${stop - 1}.deliveredAt`]: now }) },
       'Parcel is not out for delivery'
     );
     if (res.status === 200) {

@@ -3,7 +3,8 @@
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ChevronRight, Package, Sparkles } from 'lucide-react';
+import { ChevronRight, Mic, Package, Sparkles } from 'lucide-react';
+import VoiceOrder from './VoiceOrder';
 
 function greetingKey(hour: number) {
   if (hour < 5) return 'greet.night' as const;
@@ -20,8 +21,9 @@ function yangonHour() {
 
 /** Top of Discover: a friendly greeting plus the two main shortcuts (parcel, AI picks). */
 export default function DiscoverHeader() {
-  const { t } = useT();
+  const { t, tx } = useT();
   const [name, setName] = useState('');
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const [helloKey, setHelloKey] = useState<ReturnType<typeof greetingKey>>('greet.evening');
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export default function DiscoverHeader() {
   }, []);
 
   return (
-    <section className="mb-6 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+    <section className="mb-6 grid gap-4 2xl:grid-cols-[1fr_auto] 2xl:items-center">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
           {t(helloKey)}
@@ -39,7 +41,21 @@ export default function DiscoverHeader() {
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">{t('greet.sub')}</p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:flex">
+      <div className="grid gap-3 sm:grid-cols-3 2xl:flex">
+        <button
+          type="button"
+          onClick={() => setVoiceOpen(true)}
+          className="group flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-left shadow-sm transition hover:border-customer/40 hover:shadow-md"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10">
+            <Mic className="h-5 w-5 text-rose-500" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-bold text-foreground">{tx('Voice order')}</span>
+            <span className="block text-xs text-muted-foreground">Say it, we fill the cart</span>
+          </span>
+          <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground transition group-hover:translate-x-0.5" />
+        </button>
         <Link
           href="/customer-dashboard/parcels"
           className="group flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm transition hover:border-customer/40 hover:shadow-md"
@@ -67,6 +83,7 @@ export default function DiscoverHeader() {
           <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground transition group-hover:translate-x-0.5" />
         </Link>
       </div>
+      <VoiceOrder open={voiceOpen} onClose={() => setVoiceOpen(false)} />
     </section>
   );
 }

@@ -1,5 +1,7 @@
 'use client';
 
+
+import { NOMINATIM_URL } from '@/lib/mapServices';
 import React, { useEffect, useState } from 'react';
 import {
   X,
@@ -15,9 +17,25 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatKyat } from '@/lib/currency';
+import { pointsRedemption } from '@/lib/loyalty';
+import { useT } from '@/lib/i18n';
+import { CalendarClock, Gift } from 'lucide-react';
 import type { CartItem, DeliveryAddressInfo } from '../types';
 
 export type PaymentMethod = 'cash' | 'bank';
+
+/** Extra checkout choices sent with the order. */
+export type CheckoutExtras = {
+  usePoints: boolean;
+  /** ISO time for a scheduled delivery, or '' for as soon as possible. */
+  scheduledFor: string;
+};
+
+/** Value for a datetime-local input, in the browser's local time. */
+function toLocalInputValue(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 interface OrderReceiptModalProps {
   isOpen: boolean;
@@ -35,7 +53,8 @@ interface OrderReceiptModalProps {
   /** Returns order number on success, null on failure */
   onConfirmPayment: (
     tipAmount: number,
-    promo?: { discount: number; promoApplied: boolean; promoCodeUsed?: string }
+    promo?: { discount: number; promoApplied: boolean; promoCodeUsed?: string },
+    extras?: CheckoutExtras
   ) => Promise<string | null>;
   restaurantName?: string;
   formatMoney?: (amount: number) => string;
@@ -83,6 +102,7 @@ export default function OrderReceiptModal({
   onDeliveryAddressChange,
   onOpenAddressPicker,
 }: OrderReceiptModalProps) {
+  const { tx } = useT();
   const [step, setStep] = useState<'checkout' | 'slip'>('checkout');
   const [orderNumber, setOrderNumber] = useState('');
   const [slipItems, setSlipItems] = useState<CartItem[]>([]);
@@ -106,6 +126,14 @@ export default function OrderReceiptModal({
   const [appliedPercent, setAppliedPercent] = useState(0);
   const [appliedCode, setAppliedCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
+  /** Discount the server quoted for the applied code (null = use appliedPercent). */
+  const [appliedAmount, setAppliedAmount] = useState<number | null>(null);
+  const [promoLabel, setPromoLabel] = useState('');
+  const [checkingPromo, setCheckingPromo] = useState(false);
+  const [pointsBalance, setPointsBalance] = useState(0);
+  const [usePoints, setUsePoints] = useState(false);
+  const [deliverLater, setDeliverLater] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState('');
   const [grantedPromo, setGrantedPromo] = useState<{
     hasPromo: boolean;
     promoCode: string;
@@ -128,6 +156,11 @@ export default function OrderReceiptModal({
       setAppliedPercent(0);
       setAppliedCode('');
       setPromoApplied(false);
+      setAppliedAmount(null);
+      setPromoLabel('');
+      setUsePoints(false);
+      setDeliverLater(false);
+      setScheduledAt('');
       if (initialPromoCode && Number(initialPromoPercent) > 0) {
         setPromoInput(initialPromoCode);
         setAppliedCode(initialPromoCode);
@@ -167,6 +200,7 @@ export default function OrderReceiptModal({
           promoCode: String(profile.promoCode || ''),
           promoDiscountPercent: Number(profile.promoDiscountPercent) || 0,
         });
+        setPointsBalance(Math.max(0, Number(profile.loyaltyPoints) || 0));
       } catch {
         if (!cancelled) {
           setStreakVoucher(null);
@@ -186,9 +220,13 @@ export default function OrderReceiptModal({
   const tipAmount =
     tipChoice === 'custom' ? parseCustomTip(customTip) : Number(tipChoice) || 0;
   const discountAmount = promoApplied
-    ? Math.max(0, Math.round(subtotal * (appliedPercent / 100)))
+    ? Math.max(0, Math.round(appliedAmount ?? subtotal * (appliedPercent / 100)))
     : 0;
-  const checkoutTotal = Math.max(0, subtotal + tax + deliveryFee - discountAmount);
+  const pointsPlan = pointsRedemption(pointsBalance, subtotal - Math.min(discountAmount, subtotal));
+  const pointsValue = usePoints ? pointsPlan.value : 0;
+  const checkoutTotal = Math.max(0, subtotal + tax + deliveryFee - discountAmount - pointsValue);
+  const minSchedule = toLocalInputValue(new Date(Date.now() + 35 * 60_000));
+  const maxSchedule = toLocalInputValue(new Date(Date.now() + 3 * 24 * 3600_000));
   const grandTotal = checkoutTotal + tipAmount + (Number(platformFee) || 0);
   const itemCount = items.reduce((s, i) => s + i.quantity, 0);
   const addressOptions =
@@ -198,52 +236,53 @@ export default function OrderReceiptModal({
         : [deliveryAddress, ...savedAddresses]
       : [deliveryAddress];
 
-  const applyPromoCode = (code: string, percent: number) => {
-    const clean = String(code || '').trim();
-    const pct = Number(percent) || 0;
-    if (!clean || pct <= 0) {
-      toast.error('Invalid promo code');
+  /** Checks a code with the server (personal, streak or campaign code). */
+  const applyPromoCode = async (code: string) => {
+    const clean = String(code || '').trim().toUpperCase();
+    if (!clean) {
+      toast.error('Enter a promo code');
       return;
     }
-    setPromoInput(clean);
-    setAppliedCode(clean);
-    setAppliedPercent(pct);
-    setPromoApplied(true);
-    toast.success(`${pct}% off applied`);
+    setCheckingPromo(true);
+    try {
+      const res = await fetch('/api/customer/checkout-quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subtotal, deliveryFee, promoCode: clean }),
+      });
+      const data = await res.json();
+      const promo = data?.promo;
+      if (!res.ok || !promo?.ok) {
+        toast.error(promo?.message || data?.message || 'Invalid promo code');
+        setPromoApplied(false);
+        setAppliedAmount(null);
+        setAppliedCode('');
+        return;
+      }
+      setPromoInput(promo.code);
+      setAppliedCode(promo.code);
+      setAppliedAmount(Number(promo.discount) || 0);
+      setPromoLabel(String(promo.label || ''));
+      setPromoApplied(true);
+      toast.success(`${promo.label} applied`);
+    } catch {
+      toast.error('Could not check the code. Try again.');
+    } finally {
+      setCheckingPromo(false);
+    }
   };
 
-  const applyPromo = () => {
-    const entered = promoInput.trim().toUpperCase();
-    const adminCode = String(grantedPromo?.promoCode || '').trim().toUpperCase();
-    const streakCode = String(streakVoucher?.streakVoucherCode || '').trim().toUpperCase();
+  const applyPromo = () => applyPromoCode(promoInput);
 
-    if (
-      grantedPromo?.hasPromo &&
-      adminCode &&
-      entered === adminCode &&
-      Number(grantedPromo.promoDiscountPercent) > 0
-    ) {
-      applyPromoCode(grantedPromo.promoCode, grantedPromo.promoDiscountPercent);
-      return;
-    }
-
-    if (
-      streakVoucher?.hasStreakReward &&
-      streakCode &&
-      entered === streakCode &&
-      Number(streakVoucher.streakDiscountPercent) > 0
-    ) {
-      applyPromoCode(streakVoucher.streakVoucherCode, streakVoucher.streakDiscountPercent);
-      return;
-    }
-
-    toast.error('Invalid promo code');
+  const removePromo = () => {
     setPromoApplied(false);
-    setAppliedPercent(0);
+    setAppliedAmount(null);
     setAppliedCode('');
+    setPromoLabel('');
+    setPromoInput('');
   };
 
-  const useCurrentLocation = () => {
+  const detectCurrentLocation = () => {
     if (!onDeliveryAddressChange) return;
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       toast.error('Geolocation is not supported on this device');
@@ -257,7 +296,7 @@ export default function OrderReceiptModal({
         const lng = position.coords.longitude;
         try {
           const res = await fetch(
-            'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' +
+            NOMINATIM_URL + '/reverse?format=jsonv2&lat=' +
               lat +
               '&lon=' +
               lng,
@@ -304,7 +343,7 @@ export default function OrderReceiptModal({
       return;
     }
     if (value === 'CURRENT_LOC') {
-      useCurrentLocation();
+      detectCurrentLocation();
       return;
     }
 
@@ -324,18 +363,31 @@ export default function OrderReceiptModal({
       platformFee,
       tax,
       tipAmount,
-      discount: discountAmount,
+      discount: discountAmount + pointsValue,
       payment: paymentMethod,
       restaurantName: restaurantName || '',
       addressLabel: deliveryAddress.label,
       addressLine: deliveryAddress.address,
     };
 
-    const number = await onConfirmPayment(tipAmount, {
-      discount: discountAmount,
-      promoApplied: promoApplied && discountAmount > 0,
-      promoCodeUsed: promoApplied ? appliedCode : '',
-    });
+    let scheduledFor = '';
+    if (deliverLater) {
+      const at = new Date(scheduledAt);
+      if (!scheduledAt || Number.isNaN(at.getTime())) {
+        toast.error('Pick a delivery time');
+        return;
+      }
+      scheduledFor = at.toISOString();
+    }
+    const number = await onConfirmPayment(
+      tipAmount,
+      {
+        discount: discountAmount,
+        promoApplied: promoApplied && discountAmount > 0,
+        promoCodeUsed: promoApplied ? appliedCode : '',
+      },
+      { usePoints: usePoints && pointsPlan.points > 0, scheduledFor }
+    );
     if (!number) return;
 
     setOrderNumber(number);
@@ -566,6 +618,51 @@ export default function OrderReceiptModal({
             </div>
           </div>
 
+          <div className="rounded-xl border border-border p-3">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <CalendarClock className="h-3.5 w-3.5 text-customer" /> {tx('When')}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { later: false, label: 'As soon as possible' },
+                { later: true, label: 'Schedule for later' },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  disabled={isPlacing}
+                  onClick={() => {
+                    setDeliverLater(opt.later);
+                    if (opt.later && !scheduledAt) setScheduledAt(minSchedule);
+                  }}
+                  className={`rounded-xl border-2 px-3 py-2 text-xs font-semibold transition-all ${
+                    deliverLater === opt.later
+                      ? 'border-customer bg-orange-50/60 text-customer'
+                      : 'border-border bg-muted/30 text-foreground'
+                  }`}
+                >
+                  {tx(opt.label)}
+                </button>
+              ))}
+            </div>
+            {deliverLater && (
+              <div className="mt-2">
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  min={minSchedule}
+                  max={maxSchedule}
+                  disabled={isPlacing}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="input-field w-full py-2.5 text-sm"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  At least 30 minutes from now, up to 3 days ahead, during the restaurant&apos;s opening hours.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
               Selected Items · {itemCount}
@@ -597,7 +694,7 @@ export default function OrderReceiptModal({
             <div className="mb-3 flex items-center gap-2">
               <Bike className="h-4 w-4 text-customer" />
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Tip Rider
+                {tx('Tip Rider')}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -652,15 +749,13 @@ export default function OrderReceiptModal({
 
           <div className="space-y-2 border-t border-border pt-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Promo Code
+              {tx('Promo Code')}
             </p>
             {grantedPromo?.hasPromo && grantedPromo.promoCode && (
               <button
                 type="button"
                 disabled={isPlacing}
-                onClick={() =>
-                  applyPromoCode(grantedPromo.promoCode, grantedPromo.promoDiscountPercent)
-                }
+                onClick={() => applyPromoCode(grantedPromo.promoCode)}
                 className="w-full rounded-xl border border-fuchsia-300 bg-gradient-to-r from-fuchsia-50 to-amber-50 px-3 py-2.5 text-left text-sm font-semibold text-fuchsia-950 transition-opacity hover:opacity-90 disabled:opacity-60 dark:border-fuchsia-500/40 dark:from-fuchsia-950/50 dark:to-amber-950/30 dark:text-fuchsia-100"
               >
                 🎉 You have a voucher: {grantedPromo.promoCode} (
@@ -671,12 +766,7 @@ export default function OrderReceiptModal({
               <button
                 type="button"
                 disabled={isPlacing}
-                onClick={() =>
-                  applyPromoCode(
-                    streakVoucher.streakVoucherCode,
-                    streakVoucher.streakDiscountPercent
-                  )
-                }
+                onClick={() => applyPromoCode(streakVoucher.streakVoucherCode)}
                 className="w-full rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-left text-sm font-semibold text-amber-900 transition-opacity hover:opacity-90 disabled:opacity-60 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-100"
               >
                 🎉 You have a voucher: {streakVoucher.streakVoucherCode} (
@@ -701,13 +791,53 @@ export default function OrderReceiptModal({
               />
               <button
                 type="button"
-                disabled={isPlacing}
+                disabled={isPlacing || checkingPromo}
                 onClick={applyPromo}
                 className="flex-shrink-0 rounded-xl border border-border bg-muted px-4 py-2.5 text-sm font-bold text-foreground transition-colors hover:bg-border disabled:opacity-60"
               >
-                Apply
+                {checkingPromo ? 'Checking…' : 'Apply'}
               </button>
             </div>
+            {promoApplied && discountAmount > 0 && (
+              <div className="flex items-center justify-between rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                <span>
+                  {appliedCode} · {promoLabel || 'Discount'} · −{formatMoney(discountAmount)}
+                </span>
+                <button type="button" onClick={removePromo} className="underline">
+                  Remove
+                </button>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Try WELCOME10 (first order), FREEDEL or RAINY500.
+            </p>
+          </div>
+
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <Gift className="h-3.5 w-3.5 text-customer" /> {tx('Loyalty points')}
+            </p>
+            {pointsPlan.points > 0 ? (
+              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+                <span className="text-sm text-foreground">
+                  Use <b>{pointsPlan.points}</b> of your {pointsBalance} points
+                  <span className="block text-xs text-muted-foreground">
+                    Saves {formatMoney(pointsPlan.value)}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 accent-orange-500"
+                  checked={usePoints}
+                  disabled={isPlacing}
+                  onChange={(e) => setUsePoints(e.target.checked)}
+                />
+              </label>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                You have {pointsBalance} points. Earn 1 point for every 1,000 Ks; spend from 50 points (1 point = 20 Ks).
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5 text-sm border-t border-border pt-3">
@@ -729,8 +859,14 @@ export default function OrderReceiptModal({
                 <span className="font-semibold font-tabular">-{formatMoney(discountAmount)}</span>
               </div>
             )}
+            {pointsValue > 0 && (
+              <div className="flex justify-between text-danger">
+                <span>- Points ({pointsPlan.points})</span>
+                <span className="font-semibold font-tabular">-{formatMoney(pointsValue)}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center pt-2 border-t border-border">
-              <span className="text-base font-bold text-foreground">Grand Total</span>
+              <span className="text-base font-bold text-foreground">{tx('Grand Total')}</span>
               <span className="text-lg font-bold font-tabular text-customer">
                 {formatMoney(grandTotal)}
               </span>
@@ -739,7 +875,7 @@ export default function OrderReceiptModal({
 
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Payment Method
+              {tx('Payment Method')}
             </p>
             <div className="space-y-2.5">
               <button
@@ -766,7 +902,7 @@ export default function OrderReceiptModal({
                       paymentMethod === 'cash' ? 'text-customer' : 'text-foreground'
                     }`}
                   >
-                    Cash on Delivery
+                    {tx('Cash on Delivery')}
                   </p>
                   <p className="text-xs text-muted-foreground">Pay when your order arrives</p>
                 </div>

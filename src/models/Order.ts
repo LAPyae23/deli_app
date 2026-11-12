@@ -73,6 +73,16 @@ const OrderSchema = new mongoose.Schema(
       default: 'Motorcycle',
     },
     cancelReason: { type: String, default: '' },
+    /** Customer asked for delivery at this time (null = as soon as possible). */
+    scheduledFor: { type: Date, default: null },
+    /** Loyalty points this order earned (set when delivered) and spent. */
+    pointsEarned: { type: Number, default: 0 },
+    pointsRedeemed: { type: Number, default: 0 },
+    pointsValue: { type: Number, default: 0 },
+    pointsRefunded: { type: Boolean, default: false },
+    /** Group order this came from, and who owes what. */
+    groupCode: { type: String, default: '' },
+    groupShares: { type: mongoose.Schema.Types.Mixed },
   },
   { timestamps: true }
 );
@@ -88,6 +98,7 @@ OrderSchema.index({ restaurantId: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ customerId: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ riderId: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ status: 1, unassigned: 1, createdAt: -1 });
+OrderSchema.index({ status: 1, completedAt: -1 });
 
 if (mongoose.models.Order) {
   delete mongoose.models.Order;

@@ -62,6 +62,12 @@ export async function PATCH(
     if (typeof body.isPopular === 'boolean') {
       update.isPopular = body.isPopular;
     }
+    if (body.calories !== undefined) {
+      const kcal = Number(body.calories);
+      update.calories = body.calories === '' || body.calories === null || !Number.isFinite(kcal) || kcal <= 0
+        ? null
+        : Math.min(5000, Math.round(kcal));
+    }
     if (Array.isArray(body.dietaryTags)) {
       update.dietaryTags = body.dietaryTags.map((t: string) => String(t));
     }

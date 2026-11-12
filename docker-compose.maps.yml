@@ -1,0 +1,56 @@
+# Self-hosted map services for FoodDash (Myanmar map data).
+#
+# The public OSRM / Nominatim servers are free but rate-limited and not for
+# production traffic. Run these on any small VPS (4 GB RAM is enough for
+# Myanmar), then set in Vercel:
+#   NEXT_PUBLIC_OSRM_URL=https://osrm.your-domain
+#   NEXT_PUBLIC_NOMINATIM_URL=https://geo.your-domain
+#
+# First run (downloads and prepares the Myanmar extract, ~10–20 minutes):
+#   docker compose -f docker-compose.maps.yml run --rm osrm-prepare
+#   docker compose -f docker-compose.maps.yml up -d osrm nominatim
+#
+# Put HTTPS in front (Caddy, nginx or Cloudflare Tunnel) and allow CORS for
+# your FoodDash domain.
+
+services:
+  osrm-prepare:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    volumes:
+      - osrm-data:/data
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        cd /data
+        [ -f myanmar-latest.osm.pbf ] || wget -q https://download.geofabrik.de/asia/myanmar-latest.osm.pbf
+        osrm-extract -p /opt/car.lua myanmar-latest.osm.pbf
+        osrm-partition myanmar-latest.osrm
+        osrm-customize myanmar-latest.osrm
+
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    volumes:
+      - osrm-data:/data
+    command: osrm-routed --algorithm mld /data/myanmar-latest.osrm
+    ports:
+      - '5000:5000'
+    restart: unless-stopped
+
+  nominatim:
+    image: mediagis/nominatim:4.4
+    environment:
+      PBF_URL: https://download.geofabrik.de/asia/myanmar-latest.osm.pbf
+      REPLICATION_URL: https://download.geofabrik.de/asia/myanmar-updates/
+      NOMINATIM_PASSWORD: change-me
+    volumes:
+      - nominatim-data:/var/lib/postgresql/14/main
+    ports:
+      - '8080:8080'
+    shm_size: 1gb
+    restart: unless-stopped
+
+volumes:
+  osrm-data:
+  nominatim-data:

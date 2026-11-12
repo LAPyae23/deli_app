@@ -3,7 +3,7 @@ import dbConnect from '@/lib/mongodb';
 import Order from '@/models/Order';
 import User from '@/models/User';
 import { YANGON_TZ, hourLabel, startOfYangonDay, yangonParts } from '@/lib/yangonTime';
-import { cacheGetOrSet } from '@/lib/ttlCache';
+import { sharedGetOrSet as cacheGetOrSet } from '@/lib/sharedCache';
 
 const ACTIVE_STATUSES = ['PENDING', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'];
 

@@ -25,7 +25,24 @@ type RiderParcel = {
   pickupDistanceKm?: number | null;
   etaMins?: number;
   deliveredAt?: string;
+  mainDeliveredAt?: string;
+  extraStops?: Array<Place & { recipientName: string; recipientPhone?: string; deliveredAt?: string }>;
 };
+
+/** The next drop-off still to deliver: 0 = main drop-off, 1.. = extra stops. */
+function nextStop(p: RiderParcel) {
+  const stops = [
+    { place: p.dropoff, name: p.recipientName || 'recipient', phone: p.recipientPhone, done: Boolean(p.mainDeliveredAt) },
+    ...(p.extraStops || []).map((x) => ({
+      place: x as Place,
+      name: x.recipientName,
+      phone: x.recipientPhone,
+      done: Boolean(x.deliveredAt),
+    })),
+  ];
+  const index = Math.max(0, stops.findIndex((x) => !x.done));
+  return { index, total: stops.length, ...stops[index] };
+}
 
 const ks = (n: number) => `${Math.round(n).toLocaleString()} Ks`;
 const directions = (p: { lat: number; lng: number }) =>
@@ -139,7 +156,10 @@ export default function RiderParcels({ online }: { online: boolean }) {
           <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500">{t('rp.inProgress')}</h3>
           {active.map((p) => {
             const toPickup = p.status === 'ACCEPTED';
-            const target = toPickup ? p.pickup : p.dropoff;
+            const stop = nextStop(p);
+            const target = toPickup ? p.pickup : stop.place;
+            const callPhone = toPickup ? p.senderPhone : stop.phone;
+            const callName = toPickup ? p.senderName || 'sender' : stop.name;
             return (
               <article key={p._id} className="space-y-3 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
@@ -147,6 +167,7 @@ export default function RiderParcels({ online }: { online: boolean }) {
                     <p className="text-xs font-bold text-slate-500">{p.code}</p>
                     <p className="text-sm font-bold text-slate-900">
                       {toPickup ? t('rp.goPickup') : t('rp.deliver')}
+                      {!toPickup && stop.total > 1 ? ` · stop ${stop.index + 1} of ${stop.total}` : ''}
                     </p>
                   </div>
                   <p className="text-sm font-bold text-emerald-700">{ks(p.price.riderEarning)}</p>
@@ -172,12 +193,12 @@ export default function RiderParcels({ online }: { online: boolean }) {
                   >
                     <Navigation className="h-3.5 w-3.5" /> {t('rp.navigate')}
                   </a>
-                  {(toPickup ? p.senderPhone : p.recipientPhone) && (
+                  {callPhone && (
                     <a
-                      href={`tel:${toPickup ? p.senderPhone : p.recipientPhone}`}
+                      href={`tel:${callPhone}`}
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
                     >
-                      <Phone className="h-3.5 w-3.5" /> {t('rp.call', { name: toPickup ? p.senderName || 'sender' : p.recipientName || 'recipient' })}
+                      <Phone className="h-3.5 w-3.5" /> {t('rp.call', { name: callName })}
                     </a>
                   )}
                 </div>
@@ -202,7 +223,10 @@ export default function RiderParcels({ online }: { online: boolean }) {
                     <button
                       type="button"
                       disabled={(pins[p._id] || '').length !== 4 || busy === p._id + 'deliver'}
-                      onClick={() => act(p._id, 'deliver', { pin: pins[p._id] })}
+                      onClick={() => {
+                        void act(p._id, 'deliver', { pin: pins[p._id], stop: stop.index });
+                        setPins((m) => ({ ...m, [p._id]: '' }));
+                      }}
                       className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white disabled:opacity-50"
                     >
                       {t('rp.confirm')}
@@ -234,7 +258,10 @@ export default function RiderParcels({ online }: { online: boolean }) {
                     {p.code} · {p.size.toLowerCase()}
                   </p>
                   <p className="truncate text-sm font-semibold text-slate-900">{p.pickup.address}</p>
-                  <p className="truncate text-xs text-slate-500">→ {p.dropoff.address}</p>
+                  <p className="truncate text-xs text-slate-500">
+                    → {p.dropoff.address}
+                    {p.extraStops?.length ? ` + ${p.extraStops.length} more stop${p.extraStops.length > 1 ? 's' : ''}` : ''}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-emerald-700">{ks(p.price.riderEarning)}</p>

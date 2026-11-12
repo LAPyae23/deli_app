@@ -1,5 +1,7 @@
 'use client';
 
+
+import { OSRM_URL } from '@/lib/mapServices';
 import React, { useEffect, useMemo, useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
@@ -41,7 +43,7 @@ async function fetchOsrmRoute(
   end: LatLng
 ): Promise<L.LatLngExpression[]> {
   const url =
-    `https://router.project-osrm.org/route/v1/driving/` +
+    `${OSRM_URL}/route/v1/driving/` +
     `${start.lng},${start.lat};${end.lng},${end.lat}` +
     `?overview=full&geometries=geojson`;
 

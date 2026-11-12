@@ -18,7 +18,10 @@ export type ParcelDoc = Record<string, unknown> & {
 
 export function isParty(session: Session, p: ParcelDoc) {
   if (session.role === 'ADMIN') return true;
-  if (session.role === 'CUSTOMER') return p.senderId === session.userId || p.recipientId === session.userId;
+  if (session.role === 'CUSTOMER') {
+    const stops = (Array.isArray(p.extraStops) ? p.extraStops : []) as Array<{ recipientId?: string }>;
+    return p.senderId === session.userId || p.recipientId === session.userId || stops.some((s) => s.recipientId === session.userId);
+  }
   if (session.role === 'RIDER') return p.riderId === session.userId || (!p.riderId && p.status === 'REQUESTED');
   return false;
 }
@@ -26,7 +29,19 @@ export function isParty(session: Session, p: ParcelDoc) {
 /** Strip what a viewer must not see (riders never see the delivery PIN). */
 export function viewFor(session: Session, p: ParcelDoc) {
   const out: Record<string, unknown> = { ...p, _id: String(p._id) };
-  if (session.role === 'RIDER') delete out.deliveryPin;
+  if (session.role === 'RIDER') {
+    delete out.deliveryPin;
+    if (Array.isArray(p.extraStops)) {
+      out.extraStops = (p.extraStops as Array<Record<string, unknown>>).map(({ deliveryPin: _pin, ...rest }) => rest);
+    }
+  }
+  // An extra-stop recipient only sees their own PIN.
+  if (session.role === 'CUSTOMER' && p.senderId !== session.userId && Array.isArray(p.extraStops)) {
+    out.extraStops = (p.extraStops as Array<Record<string, unknown>>).map((s) =>
+      s.recipientId === session.userId ? s : (({ deliveryPin: _pin, ...rest }) => rest)(s)
+    );
+    if (p.recipientId !== session.userId) delete out.deliveryPin;
+  }
   if (session.role === 'RIDER' && p.status === 'REQUESTED') {
     // Before accepting, a rider sees areas and fare, not phone numbers.
     delete out.senderPhone;

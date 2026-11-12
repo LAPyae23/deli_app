@@ -6,7 +6,12 @@ import {
   Settings, LogOut, ChevronLeft, ChevronRight,
   SlidersVertical, MapPin, TriangleAlert, MessageSquare,
   Download, FileText, Loader2, Search, UserRound, Bug,
+  TicketPercent, Activity,
 } from 'lucide-react';
+import LanguageToggle from '@/components/LanguageToggle';
+import { useT } from '@/lib/i18n';
+import PromoManager from './PromoManager';
+import SystemHealth from './SystemHealth';
 import { toast } from 'sonner';
 import AppLogo from '@/components/ui/AppLogo';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -38,6 +43,8 @@ type AdminTab =
   | 'riders'
   | 'lookup'
   | 'analytics'
+  | 'promos'
+  | 'health'
   | 'config';
 
 const NAV_GROUPS: {
@@ -65,9 +72,17 @@ const NAV_GROUPS: {
     ],
   },
   {
+    key: 'navg-marketing',
+    label: 'Marketing',
+    items: [
+      { key: 'anav-promos', tab: 'promos', icon: TicketPercent, label: 'Promo Codes', badge: null },
+    ],
+  },
+  {
     key: 'navg-system',
     label: 'System',
     items: [
+      { key: 'anav-health', tab: 'health', icon: Activity, label: 'System Health', badge: null },
       { key: 'anav-config', tab: 'config', icon: SlidersVertical, label: 'Configuration', badge: null },
     ],
   },
@@ -252,6 +267,18 @@ function AdminTabContent({
           <RFMDashboard />
         </div>
       );
+    case 'promos':
+      return (
+        <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
+          <PromoManager />
+        </div>
+      );
+    case 'health':
+      return (
+        <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
+          <SystemHealth />
+        </div>
+      );
     case 'config':
       return (
         <div className="mx-auto max-w-screen-2xl p-6 xl:p-8">
@@ -266,6 +293,7 @@ function AdminTabContent({
 export default function AdminLayout() {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [collapsed, setCollapsed] = useState(false);
+  const { tx } = useT();
   const [adminStats, setAdminStats] = useState<any>(null);
   const [lastFetchTime, setLastFetchTime] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -460,7 +488,7 @@ export default function AdminLayout() {
           {NAV_GROUPS.map((group) => (
             <div key={group.key}>
               {!collapsed && (
-                <p className="text-xs font-bold tracking-widest uppercase text-muted-foreground px-3 mb-1.5">{group.label}</p>
+                <p className="text-xs font-bold tracking-widest uppercase text-muted-foreground px-3 mb-1.5">{tx(group.label)}</p>
               )}
               <div className="space-y-0.5">
                 {group.items.map((item) => {
@@ -469,7 +497,7 @@ export default function AdminLayout() {
                     <button
                       key={item.key}
                       onClick={() => setActiveTab(item.tab)}
-                      title={collapsed ? item.label : undefined}
+                      title={collapsed ? tx(item.label) : undefined}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
                         isActive
                           ? 'bg-admin/15 text-admin' :'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -478,7 +506,7 @@ export default function AdminLayout() {
                       <item.icon className="w-4 h-4 flex-shrink-0" />
                       {!collapsed && (
                         <>
-                          <span className="flex-1 text-left">{item.label}</span>
+                          <span className="flex-1 text-left">{tx(item.label)}</span>
                           {item.badge && (
                             <span className="min-w-[20px] h-5 flex items-center justify-center bg-admin/20 text-admin text-xs font-bold rounded-full px-1.5">
                               {item.badge}
@@ -496,6 +524,7 @@ export default function AdminLayout() {
 
         <div className="p-3 border-t border-border space-y-0.5">
           <ThemeToggle collapsed={collapsed} showLabel />
+          <LanguageToggle collapsed={collapsed} />
           <button
             onClick={() => setActiveTab('config')}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed ? 'justify-center px-0' : ''}`}
@@ -507,10 +536,10 @@ export default function AdminLayout() {
           <a
             href="/api/auth/logout"
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed ? 'justify-center px-0' : ''}`}
-            title={collapsed ? 'Sign Out' : undefined}
+            title={collapsed ? tx('Sign Out') : undefined}
           >
             <LogOut className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>Sign Out</span>}
+            {!collapsed && <span>{tx('Sign Out')}</span>}
           </a>
         </div>
       </aside>

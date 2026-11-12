@@ -1,5 +1,7 @@
 'use client';
 
+
+import { NOMINATIM_URL } from '@/lib/mapServices';
 import { useT } from '@/lib/i18n';
 import PushOptIn from '@/components/PushOptIn';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,9 +39,19 @@ type Quote = {
   baseFee: number;
   distanceFee: number;
   sizeFee: number;
+  stopFee?: number;
   total: number;
   etaMins: number;
 };
+type ExtraStopView = {
+  address: string;
+  recipientName: string;
+  recipientPhone?: string;
+  deliveryPin?: string;
+  deliveredAt?: string;
+};
+/** An extra drop-off being filled in on the form. */
+type StopDraft = { place: Place; name: string; phone: string };
 type ParcelView = {
   _id: string;
   code: string;
@@ -56,6 +68,8 @@ type ParcelView = {
   price: { total: number; roadKm: number };
   etaMins?: number;
   deliveryPin?: string;
+  extraStops?: ExtraStopView[];
+  mainDeliveredAt?: string;
   riderName?: string;
   riderPhone?: string;
   riderCoords?: { lat?: number; lng?: number };
@@ -90,7 +104,7 @@ async function searchPlaces(q: string): Promise<Suggestion[]> {
     bounded: '1',
     limit: '5',
   });
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+  const res = await fetch(`${NOMINATIM_URL}/search?${params}`, {
     headers: { Accept: 'application/json' },
   });
   if (!res.ok) return [];
@@ -102,7 +116,7 @@ async function searchPlaces(q: string): Promise<Suggestion[]> {
 async function reverseGeocode(lat: number, lng: number) {
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
+      `${NOMINATIM_URL}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
       { headers: { Accept: 'application/json' } }
     );
     if (!res.ok) return null;
@@ -299,8 +313,22 @@ function ParcelCard({
           <span className="font-semibold">Pickup:</span> {parcel.pickup.address}
         </p>
         <p className="text-foreground">
-          <span className="font-semibold">Drop-off:</span> {parcel.dropoff.address}
+          <span className="font-semibold">{parcel.extraStops?.length ? 'Stop 1:' : 'Drop-off:'}</span> {parcel.dropoff.address}
+          {parcel.mainDeliveredAt ? ' ✓' : ''}
         </p>
+        {(parcel.extraStops || []).map((s, i) => (
+          <p key={i} className="flex flex-wrap items-center gap-2 text-foreground">
+            <span>
+              <span className="font-semibold">Stop {i + 2}:</span> {s.address} · {s.recipientName}
+              {s.deliveredAt ? ' ✓' : ''}
+            </span>
+            {s.deliveryPin && !s.deliveredAt && parcel.status !== 'CANCELLED' && (
+              <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-bold tracking-widest text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                PIN {s.deliveryPin}
+              </span>
+            )}
+          </p>
+        ))}
       </div>
 
       {active && (
@@ -357,6 +385,14 @@ export default function ParcelsClient() {
   const [description, setDescription] = useState('');
   const [notes, setNotes] = useState('');
   const [payer, setPayer] = useState<'SENDER' | 'RECIPIENT'>('SENDER');
+  const [extraStops, setExtraStops] = useState<StopDraft[]>([]);
+  const extraPoints = useMemo(
+    () => extraStops.filter((s) => s.place.lat != null).map((s) => ({ ...s.place })),
+    [extraStops]
+  );
+  const extrasValid = extraStops.every(
+    (s) => s.place.lat != null && s.name.trim() && s.phone.replace(/\D/g, '').length >= 7
+  );
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -412,7 +448,7 @@ export default function ParcelsClient() {
       const res = await fetch('/api/parcels/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pickup, dropoff, size }),
+        body: JSON.stringify({ pickup, dropoff, size, extraStops: extraPoints }),
       });
       const data = await res.json();
       if (cancelled) return;
@@ -422,7 +458,7 @@ export default function ParcelsClient() {
     return () => {
       cancelled = true;
     };
-  }, [ready, pickup, dropoff, size]);
+  }, [ready, pickup, dropoff, size, extraPoints]);
 
   const submit = async () => {
     if (!ready || !quote || quoteError) return;
@@ -431,7 +467,17 @@ export default function ParcelsClient() {
       const res = await fetch('/api/parcels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pickup, dropoff, recipientName, recipientPhone, size, description, notes, payer }),
+        body: JSON.stringify({
+          pickup,
+          dropoff,
+          recipientName,
+          recipientPhone,
+          size,
+          description,
+          notes,
+          payer,
+          extraStops: extraStops.map((s) => ({ ...s.place, recipientName: s.name, recipientPhone: s.phone })),
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Could not request a rider');
@@ -439,6 +485,7 @@ export default function ParcelsClient() {
       setDropoff(EMPTY);
       setRecipientName('');
       setRecipientPhone('');
+      setExtraStops([]);
       setDescription('');
       setNotes('');
       setTab('sent');
@@ -526,6 +573,52 @@ export default function ParcelsClient() {
             {t('parcel.recipientHint')}
           </p>
 
+          {extraStops.map((stop, i) => (
+            <div key={i} className="space-y-3 rounded-xl border border-dashed border-border p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase text-muted-foreground">Stop {i + 2}</p>
+                <button
+                  type="button"
+                  onClick={() => setExtraStops((prev) => prev.filter((_, j) => j !== i))}
+                  className="text-xs font-semibold text-danger"
+                >
+                  Remove
+                </button>
+              </div>
+              <PlaceField
+                label={`Drop-off ${i + 2}`}
+                icon={<MapPin className="h-3.5 w-3.5 text-danger" />}
+                value={stop.place}
+                onChange={(place) => setExtraStops((prev) => prev.map((s, j) => (j === i ? { ...s, place } : s)))}
+                saved={saved}
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input
+                  value={stop.name}
+                  onChange={(e) => setExtraStops((prev) => prev.map((s, j) => (j === i ? { ...s, name: e.target.value } : s)))}
+                  placeholder={t('parcel.recipientName')}
+                  className="rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-customer"
+                />
+                <input
+                  value={stop.phone}
+                  onChange={(e) => setExtraStops((prev) => prev.map((s, j) => (j === i ? { ...s, phone: e.target.value } : s)))}
+                  placeholder={t('parcel.recipientPhone')}
+                  inputMode="tel"
+                  className="rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-customer"
+                />
+              </div>
+            </div>
+          ))}
+          {extraStops.length < 2 && (
+            <button
+              type="button"
+              onClick={() => setExtraStops((prev) => [...prev, { place: EMPTY, name: '', phone: '' }])}
+              className="w-full rounded-xl border border-dashed border-customer/50 py-2 text-xs font-bold text-customer hover:bg-customer/5"
+            >
+              + Add another drop-off (multi-stop, +500 Ks per stop)
+            </button>
+          )}
+
           <div>
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t('parcel.size')}</p>
             <div className="grid gap-2 sm:grid-cols-3">
@@ -598,6 +691,12 @@ export default function ParcelsClient() {
                     <span className="font-tabular">{formatMMK(quote.sizeFee)}</span>
                   </div>
                 )}
+                {(quote.stopFee || 0) > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Extra stops</span>
+                    <span className="font-tabular">{formatMMK(quote.stopFee || 0)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between border-t border-border pt-1 font-bold text-foreground">
                   <span>{t('parcel.total')}</span>
                   <span className="font-tabular">{formatMMK(quote.total)}</span>
@@ -612,7 +711,7 @@ export default function ParcelsClient() {
           <button
             type="button"
             onClick={submit}
-            disabled={!ready || !quote || Boolean(quoteError) || submitting || !recipientName || recipientPhone.length < 7}
+            disabled={!ready || !quote || Boolean(quoteError) || submitting || !recipientName || recipientPhone.length < 7 || !extrasValid}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-customer py-3 text-sm font-bold text-white disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bike className="h-4 w-4" />}

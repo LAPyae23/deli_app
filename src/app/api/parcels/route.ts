@@ -5,7 +5,7 @@ import User from '@/models/User';
 import RiderProfile from '@/models/RiderProfile';
 import { forbidden, getSession, unauthorized } from '@/lib/auth';
 import { toLatLng, type LatLng } from '@/lib/geo';
-import { PARCEL_MAX_ROAD_KM, isParcelSize, quoteParcel } from '@/lib/parcelPricing';
+import { PARCEL_MAX_EXTRA_STOPS, PARCEL_MAX_ROAD_KM, isParcelSize, quoteParcelRoute } from '@/lib/parcelPricing';
 import {
   newDeliveryPin,
   newParcelCode,
@@ -108,11 +108,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, message: "Enter the recipient's name and a valid phone number" }, { status: 400 });
   }
 
-  const quote = quoteParcel(pickupAt, dropoffAt, size);
+  // Optional extra drop-offs (multi-stop), each with its own recipient and PIN.
+  const rawExtras = Array.isArray(body?.extraStops) ? body.extraStops.slice(0, PARCEL_MAX_EXTRA_STOPS) : [];
+  const extraStops: Array<Record<string, unknown>> = [];
+  for (const raw of rawExtras) {
+    const at = toLatLng(raw);
+    const address = clean(raw?.address, 300);
+    const name = clean(raw?.recipientName, 80);
+    const phone = normalizePhone(raw?.recipientPhone);
+    if (!at || !address || !name || phone.length < 7 || phone.length > 13) {
+      return NextResponse.json(
+        { success: false, message: 'Each extra stop needs an address on the map, a name and a phone number' },
+        { status: 400 }
+      );
+    }
+    extraStops.push({ address, detail: clean(raw?.detail), ...at, recipientName: name, recipientPhone: phone, deliveryPin: newDeliveryPin() });
+  }
+  const quote = quoteParcelRoute(
+    pickupAt,
+    [dropoffAt, ...extraStops.map((s) => ({ lat: Number(s.lat), lng: Number(s.lng) }))],
+    size
+  );
   if (quote.roadKm > PARCEL_MAX_ROAD_KM) {
     return NextResponse.json({ success: false, message: `Too far (max ${PARCEL_MAX_ROAD_KM} km by road)` }, { status: 400 });
   }
-  if (quote.roadKm < 0.2) {
+  if (quote.legsKm.some((km) => km < 0.2)) {
     return NextResponse.json({ success: false, message: 'Pickup and drop-off are the same place' }, { status: 400 });
   }
 
@@ -134,6 +154,15 @@ export async function POST(request: Request) {
   })
     .select('_id')
     .lean<{ _id: unknown }>();
+  // Link extra-stop recipients who have FoodDash accounts.
+  for (const stop of extraStops) {
+    const ph = String(stop.recipientPhone);
+    const l = ph.replace(/^0/, '');
+    const u = await User.findOne({ role: 'CUSTOMER', phone: { $in: [ph, l, `95${l}`, `+95${l}`, `+95 ${l}`] } })
+      .select('_id')
+      .lean<{ _id: unknown }>();
+    if (u) stop.recipientId = String(u._id);
+  }
 
   let parcel = null;
   for (let attempt = 0; attempt < 3 && !parcel; attempt++) {
@@ -156,13 +185,14 @@ export async function POST(request: Request) {
           roadKm: quote.roadKm,
           baseFee: quote.baseFee,
           distanceFee: quote.distanceFee,
-          sizeFee: quote.sizeFee,
+          sizeFee: quote.sizeFee + quote.stopFee,
           total: quote.total,
           riderEarning: quote.riderEarning,
           platformFee: quote.platformFee,
         },
         etaMins: quote.etaMins,
         deliveryPin: newDeliveryPin(),
+        extraStops,
       });
     } catch (error) {
       // Retry only on a duplicate parcel code.
@@ -174,7 +204,7 @@ export async function POST(request: Request) {
   }
   await notifyNearestRiders(pickupAt, {
     title: 'New parcel near you',
-    body: `${quote.roadKm} km trip · earn ${quote.riderEarning.toLocaleString()} Ks`,
+    body: `${quote.roadKm} km trip${extraStops.length ? ` · ${extraStops.length + 1} stops` : ''} · earn ${quote.riderEarning.toLocaleString()} Ks`,
     url: '/rider-fleet-dashboard',
     tag: `parcel-${parcel.code}`,
   });

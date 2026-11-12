@@ -1,5 +1,7 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
+
 import PushOptIn from '@/components/PushOptIn';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, Check, X, ChevronDown, AlertCircle, Bell, MessageCircle, Bike, User } from 'lucide-react';
@@ -30,6 +32,9 @@ interface IncomingOrder {
   receivedAt: string;
   createdAtMs: number;
   prepTime?: number;
+  /** Delivery time the customer picked (ms), when the order is scheduled. */
+  scheduledForMs?: number;
+  groupCode?: string;
 }
 
 const PREP_TIMES = [15, 20, 25, 30, 45];
@@ -87,10 +92,13 @@ function mapApiOrder(raw: Record<string, unknown>): IncomingOrder | null {
     receivedAt: formatReceivedAt(raw.createdAt as string | undefined),
     createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0,
     prepTime: raw.prepTime != null ? Number(raw.prepTime) : undefined,
+    scheduledForMs: raw.scheduledFor ? new Date(raw.scheduledFor as string).getTime() : undefined,
+    groupCode: raw.groupCode ? String(raw.groupCode) : undefined,
   };
 }
 
 export default function OrderQueue() {
+  const { tx } = useT();
   const [orders, setOrders] = useState<IncomingOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
@@ -165,7 +173,7 @@ export default function OrderQueue() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Failed to fetch');
 
-      let mapped = (Array.isArray(data.orders) ? data.orders : [])
+      const mapped = (Array.isArray(data.orders) ? data.orders : [])
         .map((raw: Record<string, unknown>) => mapApiOrder(raw))
         .filter(Boolean) as IncomingOrder[];
 
@@ -337,7 +345,7 @@ export default function OrderQueue() {
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            History
+            {tx('History')}
           </button>
         </div>
       </div>
@@ -346,17 +354,17 @@ export default function OrderQueue() {
         {isLoading ? (
           <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-restaurant border-t-transparent" />
-            <p className="text-sm font-medium">Loading orders…</p>
+            <p className="text-sm font-medium">{tx('Loading orders…')}</p>
           </div>
         ) : displayedOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <ShoppingBagIcon />
             <p className="font-semibold text-foreground mt-3">
-              {viewMode === 'ACTIVE' ? 'No active orders' : 'No order history yet'}
+              {viewMode === 'ACTIVE' ? tx('No active orders') : tx('No order history yet')}
             </p>
             <p className="text-sm text-muted-foreground">
               {viewMode === 'ACTIVE'
-                ? 'New orders will appear here in real-time'
+                ? tx('New orders will appear here in real-time')
                 : 'Delivered, rejected, and cancelled orders will show here'}
             </p>
           </div>
@@ -377,7 +385,27 @@ export default function OrderQueue() {
                       <span className={`status-badge ${STATUS_STYLES[order.status]}`}>
                         {order.status}
                       </span>
+                      {order.groupCode && (
+                        <span className="status-badge bg-violet-500/10 text-violet-600">Group</span>
+                      )}
                     </div>
+                    {order.scheduledForMs && order.scheduledForMs > Date.now() - 3600_000 && (
+                      <p
+                        className={`mt-1 inline-flex rounded-md px-2 py-0.5 text-[11px] font-bold ${
+                          order.scheduledForMs - Date.now() < 60 * 60_000
+                            ? 'bg-danger/10 text-danger'
+                            : 'bg-info/10 text-info'
+                        }`}
+                      >
+                        Scheduled for{' '}
+                        {new Date(order.scheduledForMs).toLocaleString([], {
+                          weekday: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        {order.scheduledForMs - Date.now() > 60 * 60_000 ? ' · start cooking later' : ' · start now'}
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {order.customerName} · {order.receivedAt}
                     </p>

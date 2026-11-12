@@ -26,6 +26,12 @@ const API_RULES: Rule[] = [
   { prefix: '/api/auth/logout', access: 'public' },
   { prefix: '/api/auth/', access: [] },
 
+  // Uptime check and browser error reports.
+  { prefix: '/api/health', methods: ['GET'], access: 'public' },
+  { prefix: '/api/client-errors', methods: ['POST'], access: 'public' },
+  { prefix: '/api/group-orders', access: ['CUSTOMER'] },
+  { prefix: '/api/voice-order', access: ['CUSTOMER'] },
+
   { prefix: '/api/admin/', access: ['ADMIN'] },
   { prefix: '/api/customer/', access: ['CUSTOMER', 'ADMIN'] },
   { prefix: '/api/rider/', access: ['RIDER', 'ADMIN'] },

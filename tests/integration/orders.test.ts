@@ -73,9 +73,9 @@ describe('placing orders', () => {
     const first = await newOrder({ promoCodeUsed: 'TEST10' });
     const second = await newOrder({ promoCodeUsed: 'TEST10' });
     const a = await Order.findById(first.json.orderId).lean<Record<string, any>>();
-    const b = await Order.findById(second.json.orderId).lean<Record<string, any>>();
     expect(a!.totals.discount).toBe(800);
-    expect(b!.totals.discount).toBe(0);
+    // A used code is refused instead of silently charging full price.
+    expect(second.status).toBe(400);
   });
 
   it('refuses more than the stock', async () => {
